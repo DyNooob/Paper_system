@@ -28,10 +28,21 @@ function load_json_file(string $file, array $fallback = []): array
     return is_array($decoded) ? $decoded : $fallback;
 }
 
+function safe_id(string $id): string
+{
+    return preg_replace('/[^a-zA-Z0-9_-]/', '_', $id) ?: 'unknown';
+}
+
+function ensure_dir(string $dir): void
+{
+    if (!is_dir($dir) && !mkdir($dir, 0775, true) && !is_dir($dir)) {
+        throw new RuntimeException('cannot create dir: ' . $dir);
+    }
+}
+
 function load_exams(string $base): array
 {
-    $file = $base . '/exams.json';
-    $data = load_json_file($file, []);
+    $data = load_json_file($base . '/exams.json', []);
     if ($data === []) {
         send_json(['ok' => false, 'error' => 'exams.json missing or invalid'], 200);
     }
@@ -48,6 +59,19 @@ function get_exam_students(string $base, string $examId): array
     $map = load_students_map($base);
     $rows = $map[$examId] ?? [];
     return is_array($rows) ? $rows : [];
+}
+
+function find_student_in_roster(array $roster, string $studentId): ?array
+{
+    foreach ($roster as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        if (trim((string)($row['student_id'] ?? '')) === $studentId) {
+            return $row;
+        }
+    }
+    return null;
 }
 
 function get_secret(string $base): string
@@ -117,58 +141,68 @@ function verify_token(string $token, string $examId, string $passkey, string $ip
         && (int)($x['exp'] ?? 0) >= time();
 }
 
-function ensure_dir(string $dir): void
-{
-    if (!is_dir($dir) && !mkdir($dir, 0775, true) && !is_dir($dir)) {
-        throw new RuntimeException('cannot create dir: ' . $dir);
-    }
-}
-
-function safe_id(string $id): string
-{
-    return preg_replace('/[^a-zA-Z0-9_-]/', '_', $id) ?: 'unknown';
-}
-
 function load_state(string $base, string $examId): array
 {
-    $dir = $base . '/data';
-    ensure_dir($dir);
-    $f = $dir . '/' . safe_id($examId) . '_state.json';
-    return load_json_file($f, ['students' => [], 'last_update' => gmdate('c')]);
+    ensure_dir($base . '/data');
+    return load_json_file($base . '/data/' . safe_id($examId) . '_state.json', ['students' => [], 'last_update' => gmdate('c')]);
 }
 
 function save_state(string $base, string $examId, array $state): void
 {
-    $dir = $base . '/data';
-    ensure_dir($dir);
-    $f = $dir . '/' . safe_id($examId) . '_state.json';
+    ensure_dir($base . '/data');
     $state['last_update'] = gmdate('c');
     $json = json_encode($state, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    if (file_put_contents($f, $json, LOCK_EX) === false) {
+    if (file_put_contents($base . '/data/' . safe_id($examId) . '_state.json', $json, LOCK_EX) === false) {
         throw new RuntimeException('write state failed');
     }
 }
 
 function append_log(string $base, string $examId, array $record): void
 {
-    $dir = $base . '/logs';
-    ensure_dir($dir);
-    $f = $dir . '/' . safe_id($examId) . '-' . date('Ymd') . '.log';
+    ensure_dir($base . '/logs');
+    $f = $base . '/logs/' . safe_id($examId) . '-' . date('Ymd') . '.log';
     $line = json_encode($record, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES) . PHP_EOL;
     if (file_put_contents($f, $line, FILE_APPEND | LOCK_EX) === false) {
         throw new RuntimeException('write log failed');
     }
 }
 
-function find_student_in_roster(array $roster, string $studentId): ?array
+function load_commands(string $base, string $examId): array
 {
-    foreach ($roster as $row) {
-        if (!is_array($row)) {
-            continue;
-        }
-        if (trim((string)($row['student_id'] ?? '')) === $studentId) {
-            return $row;
-        }
+    ensure_dir($base . '/data');
+    return load_json_file($base . '/data/' . safe_id($examId) . '_commands.json', ['students' => []]);
+}
+
+function save_commands(string $base, string $examId, array $commands): void
+{
+    ensure_dir($base . '/data');
+    $json = json_encode($commands, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    if (file_put_contents($base . '/data/' . safe_id($examId) . '_commands.json', $json, LOCK_EX) === false) {
+        throw new RuntimeException('write commands failed');
     }
-    return null;
+}
+
+function event_label(string $eventType): string
+{
+    $map = [
+        'suspicious_key' => '可疑按键',
+        'shortcut_blocked' => '拦截快捷键',
+        'focus_lost' => '窗口失焦',
+        'blocked_process_detected' => '发现禁用进程',
+        'blocked_process_killed' => '结束禁用进程',
+        'entry_denied_environment' => '环境冲突阻止进入',
+        'close_blocked' => '拦截关闭',
+        'student_login' => '考生登录',
+        'heartbeat' => '心跳',
+        'exam_exit' => '主动退出考试',
+        'terminated_by_admin' => '监考员终止答题',
+        'screenshot_frame' => '实时截图',
+    ];
+    return $map[$eventType] ?? $eventType;
+}
+
+function is_cheat_event(string $eventType): bool
+{
+    $cheat = ['suspicious_key', 'shortcut_blocked', 'focus_lost', 'blocked_process_detected', 'entry_denied_environment', 'exam_exit'];
+    return in_array($eventType, $cheat, true);
 }
