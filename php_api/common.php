@@ -197,6 +197,7 @@ function event_label(string $eventType): string
         'exam_exit' => '主动退出考试',
         'terminated_by_admin' => '监考员终止答题',
         'screenshot_frame' => '实时截图',
+        'process_report' => '进程快照上报',
     ];
     return $map[$eventType] ?? $eventType;
 }

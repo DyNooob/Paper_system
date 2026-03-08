@@ -1,150 +1,91 @@
 <?php
 declare(strict_types=1);
-require_once __DIR__ . '/common.php';
-
-$examId = trim((string)($_GET['exam_id'] ?? 'demo-exam'));
-$selectedStudent = trim((string)($_GET['student_id'] ?? ''));
-$cheatOnly = ((string)($_GET['cheat_only'] ?? '0')) === '1';
-
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $sid = trim((string)($_POST['student_id'] ?? ''));
-    $action = trim((string)($_POST['action'] ?? ''));
-    $value = trim((string)($_POST['value'] ?? '1'));
-    if ($sid !== '' && in_array($action, ['terminate', 'screenshot_once'], true)) {
-        $cmd = load_commands(__DIR__, $examId);
-        if (!isset($cmd['students']) || !is_array($cmd['students'])) {
-            $cmd['students'] = [];
-        }
-        if (!isset($cmd['students'][$sid]) || !is_array($cmd['students'][$sid])) {
-            $cmd['students'][$sid] = ['terminate' => false, 'screenshot_once' => false];
-        }
-        $cmd['students'][$sid][$action] = in_array(strtolower($value), ['1', 'true', 'on', 'yes'], true);
-        save_commands(__DIR__, $examId, $cmd);
-    }
-    header('Location: ?exam_id=' . urlencode($examId) . '&student_id=' . urlencode($selectedStudent) . '&cheat_only=' . ($cheatOnly ? '1' : '0'));
-    exit;
-}
-
-$state = load_state(__DIR__, $examId);
-$stateStudents = is_array($state['students'] ?? null) ? $state['students'] : [];
-$events = is_array($state['events'] ?? null) ? $state['events'] : [];
-$cmd = load_commands(__DIR__, $examId);
-$cmdStudents = is_array($cmd['students'] ?? null) ? $cmd['students'] : [];
-$roster = get_exam_students(__DIR__, $examId);
-
-$rows = [];
-foreach ($roster as $entry) {
-    if (!is_array($entry)) {
-        continue;
-    }
-    $sid = trim((string)($entry['student_id'] ?? ''));
-    if ($sid === '') {
-        continue;
-    }
-    $saved = $stateStudents[$sid] ?? [];
-    $commands = $cmdStudents[$sid] ?? ['terminate' => false, 'screenshot_once' => false];
-    $rows[$sid] = [
-        'student_id' => $sid,
-        'name' => (string)($saved['name'] ?? $entry['name'] ?? ''),
-        'class_name' => (string)($saved['class_name'] ?? $entry['class_name'] ?? ''),
-        'login' => (bool)($saved['login'] ?? false),
-        'login_count' => (int)($saved['login_count'] ?? 0),
-        'locked_out' => (bool)($saved['locked_out'] ?? false),
-        'abnormal_count' => (int)($saved['abnormal_count'] ?? 0),
-        'abnormal_last' => (string)($saved['abnormal_last'] ?? ''),
-        'last_event' => (string)($saved['last_event'] ?? ''),
-        'last_event_time' => (string)($saved['last_event_time'] ?? ''),
-        'ip' => (string)($saved['ip'] ?? ''),
-        'latest_shot' => (string)($saved['latest_shot'] ?? ''),
-        'cmd_terminate' => (bool)($commands['terminate'] ?? false),
-        'cmd_shot' => (bool)($commands['screenshot_once'] ?? false),
-    ];
-}
-
-foreach ($stateStudents as $sid => $saved) {
-    if (isset($rows[$sid]) || !is_array($saved)) {
-        continue;
-    }
-    $commands = $cmdStudents[$sid] ?? ['terminate' => false, 'screenshot_once' => false];
-    $rows[$sid] = [
-        'student_id' => (string)$sid,
-        'name' => (string)($saved['name'] ?? ''),
-        'class_name' => (string)($saved['class_name'] ?? ''),
-        'login' => (bool)($saved['login'] ?? false),
-        'login_count' => (int)($saved['login_count'] ?? 0),
-        'locked_out' => (bool)($saved['locked_out'] ?? false),
-        'abnormal_count' => (int)($saved['abnormal_count'] ?? 0),
-        'abnormal_last' => (string)($saved['abnormal_last'] ?? ''),
-        'last_event' => (string)($saved['last_event'] ?? ''),
-        'last_event_time' => (string)($saved['last_event_time'] ?? ''),
-        'ip' => (string)($saved['ip'] ?? ''),
-        'latest_shot' => (string)($saved['latest_shot'] ?? ''),
-        'cmd_terminate' => (bool)($commands['terminate'] ?? false),
-        'cmd_shot' => (bool)($commands['screenshot_once'] ?? false),
-    ];
-}
-
-uasort($rows, static fn(array $a, array $b): int => strcmp($a['student_id'], $b['student_id']));
-
-$studentEvents = [];
-if ($selectedStudent !== '') {
-    foreach (array_reverse($events) as $e) {
-        if (!is_array($e)) {
-            continue;
-        }
-        if ((string)($e['student_id'] ?? '') !== $selectedStudent) {
-            continue;
-        }
-        if ($cheatOnly && empty($e['is_cheat'])) {
-            continue;
-        }
-        $studentEvents[] = $e;
-        if (count($studentEvents) >= 200) {
-            break;
-        }
-    }
-}
+$examIdRaw = (string)($_GET['exam_id'] ?? 'demo-exam');
+$examId = htmlspecialchars($examIdRaw, ENT_QUOTES, 'UTF-8');
+$passkeyRaw = (string)($_GET['passkey'] ?? '');
 ?>
 <!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>监考面板 - <?php echo htmlspecialchars($examId, ENT_QUOTES, 'UTF-8'); ?></title>
+<title>监考面板 - <?php echo $examId; ?></title>
 <style>
-body{font-family:Arial;background:#f5f7fb;padding:16px}.card{background:#fff;padding:14px;border-radius:8px;margin-bottom:12px}
-table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #eee;padding:8px;font-size:13px}th{background:#fafafa}
-.ok{color:#11823b}.bad{color:#cf222e}.muted{color:#666}.btn{padding:4px 8px;border:1px solid #bbb;background:#fff;border-radius:4px;cursor:pointer}
-</style></head><body>
-<div class="card"><h2>监考面板（<?php echo htmlspecialchars($examId, ENT_QUOTES, 'UTF-8'); ?>）</h2><div class="muted">最后更新时间：<?php echo htmlspecialchars((string)($state['last_update'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></div></div>
-
-<div class="card">
-<table><thead><tr><th>学号</th><th>姓名</th><th>班级</th><th>登录/次数</th><th>锁定</th><th>异常</th><th>最后事件</th><th>截图</th><th>控制</th></tr></thead><tbody>
-<?php if ($rows === []): ?><tr><td colspan="9">暂无数据</td></tr><?php else: foreach ($rows as $r): ?>
-<tr>
-<td><a href="?exam_id=<?php echo urlencode($examId); ?>&student_id=<?php echo urlencode($r['student_id']); ?>&cheat_only=<?php echo $cheatOnly ? '1' : '0'; ?>"><?php echo htmlspecialchars($r['student_id'], ENT_QUOTES, 'UTF-8'); ?></a></td>
-<td><?php echo htmlspecialchars($r['name'], ENT_QUOTES, 'UTF-8'); ?></td>
-<td><?php echo htmlspecialchars($r['class_name'], ENT_QUOTES, 'UTF-8'); ?></td>
-<td><?php echo $r['login'] ? '<span class="ok">已登录</span>' : '<span class="bad">未登录</span>'; ?> / <?php echo (int)$r['login_count']; ?></td>
-<td><?php echo $r['locked_out'] ? '<span class="bad">已锁定</span>' : '<span class="ok">正常</span>'; ?></td>
-<td><?php echo (int)$r['abnormal_count']; ?> <?php echo htmlspecialchars($r['abnormal_last'], ENT_QUOTES, 'UTF-8'); ?></td>
-<td><?php echo htmlspecialchars($r['last_event'], ENT_QUOTES, 'UTF-8'); ?><br><span class="muted"><?php echo htmlspecialchars($r['last_event_time'], ENT_QUOTES, 'UTF-8'); ?></span></td>
-<td><?php if ($r['latest_shot'] !== ''): ?><a target="_blank" href="<?php echo htmlspecialchars($r['latest_shot'], ENT_QUOTES, 'UTF-8'); ?>">查看</a><?php else: ?><span class="muted">无</span><?php endif; ?></td>
-<td>
-<form method="post" style="display:inline"><input type="hidden" name="student_id" value="<?php echo htmlspecialchars($r['student_id'], ENT_QUOTES, 'UTF-8'); ?>"><input type="hidden" name="action" value="terminate"><input type="hidden" name="value" value="1"><button class="btn" type="submit">终止答题</button></form>
-<form method="post" style="display:inline"><input type="hidden" name="student_id" value="<?php echo htmlspecialchars($r['student_id'], ENT_QUOTES, 'UTF-8'); ?>"><input type="hidden" name="action" value="screenshot_once"><input type="hidden" name="value" value="1"><button class="btn" type="submit">截屏</button></form>
-</td>
-</tr>
-<?php endforeach; endif; ?>
-</tbody></table>
+body{font-family:Inter,Arial;background:#f3f5fb;margin:0;padding:16px;color:#222}
+.top{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.grid{display:grid;grid-template-columns:2fr 1.2fr;gap:12px}
+.card{background:#fff;border-radius:12px;padding:12px;box-shadow:0 3px 12px rgba(0,0,0,.06)}
+table{width:100%;border-collapse:collapse}th,td{padding:8px;border-bottom:1px solid #eee;font-size:13px}th{text-align:left;background:#fafafa}
+.ok{color:#138a3d;font-weight:700}.bad{color:#d92d20;font-weight:700}.muted{color:#667085}
+.btn{border:1px solid #cfd4dc;background:#fff;border-radius:6px;padding:4px 8px;cursor:pointer;margin-right:4px}
+.btn:hover{background:#f7f8fa}.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+pre{white-space:pre-wrap;margin:0}
+</style>
+</head>
+<body>
+<div class="top"><h2 style="margin:0">监考面板（<?php echo $examId; ?>）</h2><div id="last" class="muted"></div></div>
+<div class="grid">
+  <div class="card">
+    <div class="toolbar"><button class="btn" onclick="refreshNow()">刷新</button><span class="muted">自动刷新 2s</span></div>
+    <table id="students"><thead><tr><th>学号</th><th>姓名</th><th>班级</th><th>状态</th><th>异常</th><th>最后事件</th><th>截图</th><th>操作</th></tr></thead><tbody></tbody></table>
+  </div>
+  <div class="card">
+    <div class="toolbar">
+      <b id="detailTitle">学生详情</b>
+      <label><input type="checkbox" id="cheatOnly"> 仅作弊相关</label>
+    </div>
+    <table id="detail"><thead><tr><th>时间</th><th>事件</th><th>说明</th><th>详情</th></tr></thead><tbody></tbody></table>
+  </div>
 </div>
 
-<div class="card">
-<h3>学生详情：<?php echo htmlspecialchars($selectedStudent === '' ? '未选择' : $selectedStudent, ENT_QUOTES, 'UTF-8'); ?></h3>
-<div><a href="?exam_id=<?php echo urlencode($examId); ?>&student_id=<?php echo urlencode($selectedStudent); ?>&cheat_only=0">全部操作</a> | <a href="?exam_id=<?php echo urlencode($examId); ?>&student_id=<?php echo urlencode($selectedStudent); ?>&cheat_only=1">仅作弊相关</a></div>
-<table><thead><tr><th>时间</th><th>事件</th><th>说明</th><th>详情</th></tr></thead><tbody>
-<?php if ($studentEvents === []): ?><tr><td colspan="4">暂无记录</td></tr><?php else: foreach ($studentEvents as $e): ?>
-<tr><td><?php echo htmlspecialchars((string)($e['server_time'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td><td><?php echo htmlspecialchars((string)($e['event_type'] ?? ''), ENT_QUOTES, 'UTF-8'); ?></td><td><?php echo htmlspecialchars((string)($e['event_label'] ?? ''), ENT_QUOTES, 'UTF-8'); ?><?php if (!empty($e['is_cheat'])) echo ' ⚠️'; ?></td><td><pre style="margin:0;white-space:pre-wrap"><?php echo htmlspecialchars(json_encode($e['detail'] ?? [], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), ENT_QUOTES, 'UTF-8'); ?></pre></td></tr>
-<?php endforeach; endif; ?>
-</tbody></table>
-</div>
+<script>
+const examId = <?php echo json_encode($examIdRaw, JSON_UNESCAPED_UNICODE); ?>;
+const passkey = <?php echo json_encode($passkeyRaw, JSON_UNESCAPED_UNICODE); ?>;
+let selected = '';
+const esc = (s)=>String(s??'').replace(/[&<>\"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[m]));
+
+async function sendCmd(studentId, action, value='1') {
+  const url = `command.php?mode=set&exam_id=${encodeURIComponent(examId)}&student_id=${encodeURIComponent(studentId)}&passkey=${encodeURIComponent(passkey)}&action=${encodeURIComponent(action)}&value=${encodeURIComponent(value)}`;
+  await fetch(url);
+  await refreshNow();
+}
+
+function renderStudents(rows){
+  const tbody=document.querySelector('#students tbody');
+  tbody.innerHTML='';
+  for(const r of rows){
+    const tr=document.createElement('tr');
+    const status = r.locked_out ? '<span class="bad">已结束/锁定</span>' : (r.login ? '<span class="ok">作答中</span>' : '<span class="bad">未登录</span>');
+    const shot = r.latest_shot ? `<a target="_blank" href="${esc(r.latest_shot)}">查看</a>` : '<span class="muted">无</span>';
+    tr.innerHTML=`<td><a href="#" data-sid="${esc(r.student_id)}">${esc(r.student_id)}</a></td><td>${esc(r.name)}</td><td>${esc(r.class_name)}</td><td>${status} / 次数:${r.login_count}</td><td>${r.abnormal_count} ${esc(r.abnormal_last)}</td><td>${esc(r.last_event)}<br><span class="muted">${esc(r.last_event_time)}</span></td><td>${shot}</td><td><button class="btn" data-act="terminate" data-sid="${esc(r.student_id)}">终止</button><button class="btn" data-act="screenshot_once" data-sid="${esc(r.student_id)}">截屏</button><button class="btn" data-act="process_report_once" data-sid="${esc(r.student_id)}">获取进程</button></td>`;
+    tbody.appendChild(tr);
+  }
+  tbody.querySelectorAll('a[data-sid]').forEach(a=>a.onclick=(e)=>{e.preventDefault();selected=a.dataset.sid;refreshNow();});
+  tbody.querySelectorAll('button[data-act]').forEach(b=>b.onclick=()=>sendCmd(b.dataset.sid,b.dataset.act,'1'));
+}
+
+function renderDetail(events){
+  document.getElementById('detailTitle').textContent = selected ? `学生详情：${selected}` : '学生详情';
+  const tbody=document.querySelector('#detail tbody');
+  tbody.innerHTML='';
+  for(const e of events){
+    const tr=document.createElement('tr');
+    tr.innerHTML=`<td>${esc(e.server_time)}</td><td>${esc(e.event_type)}</td><td>${esc(e.event_label)} ${e.is_cheat?'⚠️':''}</td><td><pre>${esc(JSON.stringify(e.detail||{},null,0))}</pre></td>`;
+    tbody.appendChild(tr);
+  }
+}
+
+async function refreshNow(){
+  const cheat = document.getElementById('cheatOnly').checked ? '1' : '0';
+  const url = `dashboard_data.php?exam_id=${encodeURIComponent(examId)}&student_id=${encodeURIComponent(selected)}&cheat_only=${cheat}`;
+  const data = await (await fetch(url)).json();
+  if(!data.ok) return;
+  document.getElementById('last').textContent = `最后更新：${data.last_update}`;
+  renderStudents(data.students||[]);
+  renderDetail(data.detail||[]);
+}
+
+document.getElementById('cheatOnly').addEventListener('change', refreshNow);
+refreshNow();
+setInterval(refreshNow, 2000);
+</script>
 </body></html>

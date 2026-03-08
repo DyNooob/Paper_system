@@ -13,11 +13,12 @@ from typing import Any
 
 import requests
 from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 DEFAULT_API_BASE = "https://api.nooob.top/paper"
-USER_AGENT = "PaperSystem-ExamClient/4.1"
+USER_AGENT = "PaperSystem-ExamClient/4.2"
 
 
 @dataclass
@@ -72,7 +73,7 @@ class InvigilatorClient:
         self.student = student
 
     def _payload(self, event_type: str, detail: dict[str, Any]) -> dict[str, Any]:
-        p = {
+        payload: dict[str, Any] = {
             "exam_id": self.exam_id,
             "passkey": self.passkey,
             "token": self.token or "",
@@ -83,12 +84,12 @@ class InvigilatorClient:
             "platform": platform.platform(),
         }
         if self.student:
-            p["student"] = {
+            payload["student"] = {
                 "student_id": self.student.student_id,
                 "name": self.student.name,
                 "class_name": self.student.class_name,
             }
-        return p
+        return payload
 
     def send_event(self, event_type: str, detail: dict[str, Any]) -> None:
         try:
@@ -123,10 +124,9 @@ class InvigilatorClient:
                 },
                 timeout=6,
             )
-            data = r.json()
-            if data.get("ok"):
-                c = data.get("commands", {})
-                return c if isinstance(c, dict) else {}
+            d = r.json()
+            if d.get("ok") and isinstance(d.get("commands"), dict):
+                return d["commands"]
         except Exception:
             pass
         return {}
@@ -146,7 +146,7 @@ class InvigilatorClient:
                     "action": action,
                     "value": "1" if value else "0",
                 },
-                timeout=6,
+                timeout=5,
             )
         except Exception:
             pass
@@ -171,14 +171,14 @@ class InvigilatorClient:
 
 def get_local_ip() -> str:
     try:
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-            sock.connect(("8.8.8.8", 80))
-            return sock.getsockname()[0]
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
     except OSError:
         return "127.0.0.1"
 
 
-def list_processes_windows(limit: int = 30) -> list[str]:
+def list_processes_windows(limit: int = 80) -> list[str]:
     if platform.system().lower() != "windows":
         return []
     try:
@@ -272,19 +272,19 @@ class LoginDialog(QtWidgets.QDialog):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("考试入口")
-        f = QtWidgets.QFormLayout(self)
+        form = QtWidgets.QFormLayout(self)
         self.exam_id = QtWidgets.QLineEdit(self)
         self.passkey = QtWidgets.QLineEdit(self)
         self.passkey.setEchoMode(QtWidgets.QLineEdit.Password)
         self.api_base = QtWidgets.QLineEdit(self)
         self.api_base.setText(DEFAULT_API_BASE)
-        f.addRow("考试 ID", self.exam_id)
-        f.addRow("考试密码", self.passkey)
-        f.addRow("API Base", self.api_base)
-        b = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel, parent=self)
-        b.accepted.connect(self.accept)
-        b.rejected.connect(self.reject)
-        f.addWidget(b)
+        form.addRow("考试 ID", self.exam_id)
+        form.addRow("考试密码", self.passkey)
+        form.addRow("API Base", self.api_base)
+        btn = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel, parent=self)
+        btn.accepted.connect(self.accept)
+        btn.rejected.connect(self.reject)
+        form.addWidget(btn)
 
 
 class StudentLoginDialog(QtWidgets.QDialog):
@@ -308,6 +308,39 @@ class StudentLoginDialog(QtWidgets.QDialog):
         return StudentProfile(self.student_id.text().strip(), self.name.text().strip(), self.class_box.currentText().strip())
 
 
+class KeyMonitor(QtCore.QObject):
+    def __init__(self, inv: InvigilatorClient):
+        super().__init__()
+        self.inv = inv
+
+    def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:  # noqa: N802
+        if event.type() in (QtCore.QEvent.KeyPress, QtCore.QEvent.ShortcutOverride):
+            e = event  # type: ignore[assignment]
+            if not isinstance(e, QtGui.QKeyEvent):
+                return False
+            key = int(e.key())
+            mods = int(e.modifiers())
+            name = QtGui.QKeySequence(mods | key).toString() or f"key_{key}"
+
+            cheat_shortcuts = {
+                "Alt+Tab": "切屏尝试",
+                "Alt+F4": "关闭窗口尝试",
+                "Ctrl+Shift+Esc": "任务管理器尝试",
+                "Ctrl+Esc": "开始菜单尝试",
+                "Meta": "Win键尝试",
+                "Print": "截图尝试",
+                "F12": "开发者工具尝试",
+            }
+
+            desc = cheat_shortcuts.get(name)
+            if desc:
+                self.inv.send_event("suspicious_key", {"shortcut": name, "description": desc, "is_cheat": True})
+            elif key == int(QtCore.Qt.Key_F12):
+                self.inv.send_event("suspicious_key", {"shortcut": "F12", "description": "开发者工具尝试", "is_cheat": True})
+
+        return False
+
+
 class ExamWindow(QtWidgets.QMainWindow):
     terminate_requested = QtCore.Signal(str)
 
@@ -315,6 +348,8 @@ class ExamWindow(QtWidgets.QMainWindow):
         super().__init__()
         self.cfg = cfg
         self.inv = inv
+        self.ended = False
+
         self.setWindowTitle(f"Exam Client - {cfg.exam_id}")
         if cfg.top_most:
             self.setWindowFlag(QtCore.Qt.WindowStaysOnTopHint, True)
@@ -325,6 +360,10 @@ class ExamWindow(QtWidgets.QMainWindow):
         st.setAttribute(QWebEngineSettings.JavascriptCanOpenWindows, False)
         st.setAttribute(QWebEngineSettings.FullScreenSupportEnabled, True)
         self.web.load(QtCore.QUrl(cfg.exam_url))
+
+        self.escape_shortcut = QShortcut(QKeySequence("Esc"), self)
+        self.escape_shortcut.setContext(QtCore.Qt.ApplicationShortcut)
+        self.escape_shortcut.activated.connect(self.on_escape_exit)
 
         self.hb = QtCore.QTimer(self)
         self.hb.timeout.connect(self.on_heartbeat)
@@ -344,22 +383,44 @@ class ExamWindow(QtWidgets.QMainWindow):
             self.resize(1280, 860)
             self.show()
 
+    def force_end_exam(self, reason: str, event_type: str) -> None:
+        if self.ended:
+            return
+        self.ended = True
+        self.inv.send_event(event_type, {"reason": reason})
+        self.proc_stop.set()
+        self.setEnabled(False)
+        QtWidgets.QMessageBox.critical(self, "考试结束", "考试结束")
+        QtWidgets.QApplication.instance().quit()
+
+    def on_escape_exit(self) -> None:
+        if self.ended or not self.cfg.allow_exit_hotkey:
+            return
+        c = QtWidgets.QMessageBox.question(self, "确认退出", "确认退出考试？退出后不可再次进入。")
+        if c == QtWidgets.QMessageBox.Yes:
+            self.force_end_exam("student_confirm_exit", "exam_exit")
+
     def on_heartbeat(self) -> None:
-        self.inv.send_event("heartbeat", {"active": self.isActiveWindow(), "processes": list_processes_windows(30)})
+        self.inv.send_event("heartbeat", {"active": self.isActiveWindow()})
         cmd = self.inv.pull_command()
         if cmd.get("terminate"):
-            self.inv.send_event("terminated_by_admin", {"reason": "admin_command"})
-            self.terminate_requested.emit("考试结束：监考员已终止你的作答权限")
+            self.inv.ack_command("terminate", False)
+            self.force_end_exam("admin_terminate", "terminated_by_admin")
             return
         if cmd.get("screenshot_once"):
             self.capture_full_system_once()
             self.inv.ack_command("screenshot_once", False)
+        if cmd.get("process_report_once"):
+            self.inv.send_event("process_report", {"reason": "admin_request", "processes": list_processes_windows(300)})
+            self.inv.ack_command("process_report_once", False)
 
     def focus_guard(self) -> None:
-        if not self.cfg.focus_guard:
+        if not self.cfg.focus_guard or self.ended:
             return
-        if not self.isActiveWindow() or (self.cfg.force_fullscreen and self.windowState() != QtCore.Qt.WindowFullScreen):
-            self.inv.send_event("focus_lost", {"active": self.isActiveWindow(), "fullscreen": self.windowState() == QtCore.Qt.WindowFullScreen, "processes": list_processes_windows(25)})
+        active = self.isActiveWindow()
+        fullscreen = self.windowState() == QtCore.Qt.WindowFullScreen
+        if not active or (self.cfg.force_fullscreen and not fullscreen):
+            self.inv.send_event("focus_lost", {"active": active, "fullscreen": fullscreen})
             if self.cfg.force_fullscreen:
                 self.showFullScreen()
             self.raise_()
@@ -370,7 +431,7 @@ class ExamWindow(QtWidgets.QMainWindow):
         if not screen:
             self.inv.send_event("screenshot_frame", {"saved": False, "error": "no screen"})
             return
-        pix = screen.grabWindow(0)  # 全系统窗口截图（桌面级）
+        pix = screen.grabWindow(0)
         ba = QtCore.QByteArray()
         buf = QtCore.QBuffer(ba)
         buf.open(QtCore.QIODevice.WriteOnly)
@@ -381,29 +442,18 @@ class ExamWindow(QtWidgets.QMainWindow):
     def proc_watch_loop(self) -> None:
         blocked = set(self.cfg.blocked_processes)
         while not self.proc_stop.is_set():
-            hits = sorted(blocked.intersection(set(list_processes_windows(200))))
+            hits = sorted(blocked.intersection(set(list_processes_windows(300))))
             if hits:
-                self.inv.send_event("blocked_process_detected", {"hits": hits, "processes": list_processes_windows(40)})
+                self.inv.send_event("blocked_process_detected", {"hits": hits})
                 if self.cfg.allow_force_kill:
                     result = {p: kill_process_windows(p) for p in hits}
                     self.inv.send_event("blocked_process_killed", result)
             self.proc_stop.wait(self.cfg.process_scan_interval_sec)
 
-    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:  # type: ignore[override]
-        key = int(event.key())
-        if key in (int(QtCore.Qt.Key_F12), int(QtCore.Qt.Key_Print)):
-            self.inv.send_event("suspicious_key", {"key": key})
-        if self.cfg.allow_exit_hotkey and key == int(QtCore.Qt.Key_Escape):
-            c = QtWidgets.QMessageBox.question(self, "确认退出", "确认退出考试？退出后将不能再次进入。")
-            if c == QtWidgets.QMessageBox.Yes:
-                self.inv.send_event("exam_exit", {"hotkey": self.cfg.exit_hotkey, "processes": list_processes_windows(50)})
-                QtWidgets.QMessageBox.information(self, "考试结束", "你已退出考试，考试结束。")
-                self.proc_stop.set()
-                QtWidgets.QApplication.instance().quit()
-                return
-        super().keyPressEvent(event)
-
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # type: ignore[override]
+        if self.ended:
+            event.accept()
+            return
         self.inv.send_event("client_close_attempt", {})
         if self.cfg.force_fullscreen:
             self.inv.send_event("close_blocked", {"reason": "force_fullscreen"})
@@ -415,13 +465,14 @@ class ExamWindow(QtWidgets.QMainWindow):
 
 def main() -> int:
     app = QtWidgets.QApplication(sys.argv)
-    l = LoginDialog()
-    if l.exec() != QtWidgets.QDialog.Accepted:
+
+    login = LoginDialog()
+    if login.exec() != QtWidgets.QDialog.Accepted:
         return 0
 
-    exam_id = l.exam_id.text().strip()
-    passkey = l.passkey.text().strip()
-    api_base = l.api_base.text().strip() or DEFAULT_API_BASE
+    exam_id = login.exam_id.text().strip()
+    passkey = login.passkey.text().strip()
+    api_base = login.api_base.text().strip() or DEFAULT_API_BASE
     if not exam_id or not passkey:
         QtWidgets.QMessageBox.critical(None, "错误", "考试ID和密码不能为空")
         return 1
@@ -439,7 +490,7 @@ def main() -> int:
     inv.set_token(token)
 
     conflicts = check_environment_conflicts(cfg)
-    inv.send_event("environment_checked", {"conflicts": conflicts, "processes": list_processes_windows(50)})
+    inv.send_event("environment_checked", {"conflicts": conflicts})
     if conflicts:
         inv.send_event("entry_denied_environment", {"conflicts": conflicts})
         QtWidgets.QMessageBox.critical(None, "环境冲突", "\n".join(conflicts))
@@ -447,29 +498,28 @@ def main() -> int:
         return 3
 
     if cfg.require_student_login:
-        sd = StudentLoginDialog(cfg.class_options)
-        if sd.exec() != QtWidgets.QDialog.Accepted:
+        sdlg = StudentLoginDialog(cfg.class_options)
+        if sdlg.exec() != QtWidgets.QDialog.Accepted:
             inv.close()
             return 0
-        p = sd.profile()
-        if not p.student_id or not p.name or not p.class_name:
+        student = sdlg.profile()
+        if not student.student_id or not student.name or not student.class_name:
             QtWidgets.QMessageBox.critical(None, "错误", "学号/姓名/班级必须填写")
             inv.close()
             return 4
-        ok, err = inv.student_login(p)
+        ok, err = inv.student_login(student)
         if not ok:
             QtWidgets.QMessageBox.critical(None, "登录失败", err or "未知错误")
             inv.close()
             return 5
 
+    # 首次登录只上报一次完整进程快照
+    inv.send_event("process_report", {"reason": "first_login", "processes": list_processes_windows(250)})
+
+    key_monitor = KeyMonitor(inv)
+    app.installEventFilter(key_monitor)
+
     w = ExamWindow(cfg, inv)
-
-    def on_term(msg: str) -> None:
-        QtWidgets.QMessageBox.critical(w, "考试结束", msg)
-        w.proc_stop.set()
-        QtWidgets.QApplication.instance().quit()
-
-    w.terminate_requested.connect(on_term)
     rc = app.exec()
     inv.send_event("client_exit", {"code": rc})
     inv.close()

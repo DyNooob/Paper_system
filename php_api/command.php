@@ -28,13 +28,13 @@ if (!isset($commands['students']) || !is_array($commands['students'])) {
     $commands['students'] = [];
 }
 if (!isset($commands['students'][$studentId]) || !is_array($commands['students'][$studentId])) {
-    $commands['students'][$studentId] = ['terminate' => false, 'screenshot_once' => false];
+    $commands['students'][$studentId] = ['terminate' => false, 'screenshot_once' => false, 'process_report_once' => false];
 }
 
 if ($mode === 'set') {
     $action = trim((string)($_POST['action'] ?? $_GET['action'] ?? ''));
     $value = (string)($_POST['value'] ?? $_GET['value'] ?? '1');
-    if (!in_array($action, ['terminate', 'screenshot_once'], true)) {
+    if (!in_array($action, ['terminate', 'screenshot_once', 'process_report_once'], true)) {
         send_json(['ok' => false, 'error' => 'unknown action'], 200);
     }
     $commands['students'][$studentId][$action] = in_array(strtolower($value), ['1', 'true', 'on', 'yes'], true);
