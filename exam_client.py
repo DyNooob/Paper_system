@@ -314,29 +314,32 @@ class KeyMonitor(QtCore.QObject):
         self.inv = inv
 
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:  # noqa: N802
-        if event.type() in (QtCore.QEvent.KeyPress, QtCore.QEvent.ShortcutOverride):
-            e = event  # type: ignore[assignment]
-            if not isinstance(e, QtGui.QKeyEvent):
-                return False
-            key = int(e.key())
-            mods = int(e.modifiers())
-            name = QtGui.QKeySequence(mods | key).toString() or f"key_{key}"
+        if event.type() not in (QtCore.QEvent.KeyPress, QtCore.QEvent.ShortcutOverride):
+            return False
+        if not isinstance(event, QtGui.QKeyEvent):
+            return False
 
-            cheat_shortcuts = {
-                "Alt+Tab": "切屏尝试",
-                "Alt+F4": "关闭窗口尝试",
-                "Ctrl+Shift+Esc": "任务管理器尝试",
-                "Ctrl+Esc": "开始菜单尝试",
-                "Meta": "Win键尝试",
-                "Print": "截图尝试",
-                "F12": "开发者工具尝试",
-            }
+        key = int(event.key())
+        mods = event.modifiers()
 
-            desc = cheat_shortcuts.get(name)
-            if desc:
-                self.inv.send_event("suspicious_key", {"shortcut": name, "description": desc, "is_cheat": True})
-            elif key == int(QtCore.Qt.Key_F12):
-                self.inv.send_event("suspicious_key", {"shortcut": "F12", "description": "开发者工具尝试", "is_cheat": True})
+        cheat_desc = None
+        shortcut = QtGui.QKeySequence(int(mods) | key).toString() or f"key_{key}"
+
+        if key == int(QtCore.Qt.Key_F12):
+            cheat_desc = "尝试开发者工具"
+        elif key == int(QtCore.Qt.Key_Print):
+            cheat_desc = "尝试截图"
+        elif (mods & QtCore.Qt.AltModifier) and key == int(QtCore.Qt.Key_F4):
+            cheat_desc = "尝试关闭考试窗口"
+        elif (mods & QtCore.Qt.ControlModifier) and (mods & QtCore.Qt.ShiftModifier) and key == int(QtCore.Qt.Key_Escape):
+            cheat_desc = "尝试打开任务管理器"
+        elif (mods & QtCore.Qt.ControlModifier) and key == int(QtCore.Qt.Key_Escape):
+            cheat_desc = "尝试打开开始菜单"
+        elif key in (int(QtCore.Qt.Key_Meta), int(QtCore.Qt.Key_Super_L), int(QtCore.Qt.Key_Super_R)):
+            cheat_desc = "尝试Win键操作"
+
+        if cheat_desc:
+            self.inv.send_event("suspicious_key", {"shortcut": shortcut, "description": cheat_desc, "is_cheat": True})
 
         return False
 
@@ -364,6 +367,19 @@ class ExamWindow(QtWidgets.QMainWindow):
         self.escape_shortcut = QShortcut(QKeySequence("Esc"), self)
         self.escape_shortcut.setContext(QtCore.Qt.ApplicationShortcut)
         self.escape_shortcut.activated.connect(self.on_escape_exit)
+
+        self.cheat_shortcuts: list[QShortcut] = []
+        for seq, desc in [
+            ("F12", "尝试开发者工具"),
+            ("Print", "尝试截图"),
+            ("Ctrl+Shift+Esc", "尝试打开任务管理器"),
+            ("Ctrl+Esc", "尝试打开开始菜单"),
+            ("Alt+F4", "尝试关闭考试窗口"),
+        ]:
+            sc = QShortcut(QKeySequence(seq), self)
+            sc.setContext(QtCore.Qt.ApplicationShortcut)
+            sc.activated.connect(lambda d=desc, s=seq: self.inv.send_event("suspicious_key", {"shortcut": s, "description": d, "is_cheat": True}))
+            self.cheat_shortcuts.append(sc)
 
         self.hb = QtCore.QTimer(self)
         self.hb.timeout.connect(self.on_heartbeat)
@@ -449,6 +465,17 @@ class ExamWindow(QtWidgets.QMainWindow):
                     result = {p: kill_process_windows(p) for p in hits}
                     self.inv.send_event("blocked_process_killed", result)
             self.proc_stop.wait(self.cfg.process_scan_interval_sec)
+
+    def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:  # type: ignore[override]
+        key = int(event.key())
+        mods = event.modifiers()
+        if key in (int(QtCore.Qt.Key_F12), int(QtCore.Qt.Key_Print)):
+            self.inv.send_event("suspicious_key", {"shortcut": QtGui.QKeySequence(int(mods)|key).toString() or str(key), "description": "可疑按键", "is_cheat": True})
+        if (mods & QtCore.Qt.AltModifier) and key == int(QtCore.Qt.Key_F4):
+            self.inv.send_event("suspicious_key", {"shortcut": "Alt+F4", "description": "尝试关闭考试窗口", "is_cheat": True})
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def closeEvent(self, event: QtGui.QCloseEvent) -> None:  # type: ignore[override]
         if self.ended:
