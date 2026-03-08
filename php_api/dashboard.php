@@ -10,13 +10,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $sid = trim((string)($_POST['student_id'] ?? ''));
     $action = trim((string)($_POST['action'] ?? ''));
     $value = trim((string)($_POST['value'] ?? '1'));
-    if ($sid !== '' && in_array($action, ['terminate', 'realtime_screenshot'], true)) {
+    if ($sid !== '' && in_array($action, ['terminate', 'screenshot_once'], true)) {
         $cmd = load_commands(__DIR__, $examId);
         if (!isset($cmd['students']) || !is_array($cmd['students'])) {
             $cmd['students'] = [];
         }
         if (!isset($cmd['students'][$sid]) || !is_array($cmd['students'][$sid])) {
-            $cmd['students'][$sid] = ['terminate' => false, 'realtime_screenshot' => false];
+            $cmd['students'][$sid] = ['terminate' => false, 'screenshot_once' => false];
         }
         $cmd['students'][$sid][$action] = in_array(strtolower($value), ['1', 'true', 'on', 'yes'], true);
         save_commands(__DIR__, $examId, $cmd);
@@ -42,7 +42,7 @@ foreach ($roster as $entry) {
         continue;
     }
     $saved = $stateStudents[$sid] ?? [];
-    $commands = $cmdStudents[$sid] ?? ['terminate' => false, 'realtime_screenshot' => false];
+    $commands = $cmdStudents[$sid] ?? ['terminate' => false, 'screenshot_once' => false];
     $rows[$sid] = [
         'student_id' => $sid,
         'name' => (string)($saved['name'] ?? $entry['name'] ?? ''),
@@ -57,7 +57,7 @@ foreach ($roster as $entry) {
         'ip' => (string)($saved['ip'] ?? ''),
         'latest_shot' => (string)($saved['latest_shot'] ?? ''),
         'cmd_terminate' => (bool)($commands['terminate'] ?? false),
-        'cmd_shot' => (bool)($commands['realtime_screenshot'] ?? false),
+        'cmd_shot' => (bool)($commands['screenshot_once'] ?? false),
     ];
 }
 
@@ -65,7 +65,7 @@ foreach ($stateStudents as $sid => $saved) {
     if (isset($rows[$sid]) || !is_array($saved)) {
         continue;
     }
-    $commands = $cmdStudents[$sid] ?? ['terminate' => false, 'realtime_screenshot' => false];
+    $commands = $cmdStudents[$sid] ?? ['terminate' => false, 'screenshot_once' => false];
     $rows[$sid] = [
         'student_id' => (string)$sid,
         'name' => (string)($saved['name'] ?? ''),
@@ -80,7 +80,7 @@ foreach ($stateStudents as $sid => $saved) {
         'ip' => (string)($saved['ip'] ?? ''),
         'latest_shot' => (string)($saved['latest_shot'] ?? ''),
         'cmd_terminate' => (bool)($commands['terminate'] ?? false),
-        'cmd_shot' => (bool)($commands['realtime_screenshot'] ?? false),
+        'cmd_shot' => (bool)($commands['screenshot_once'] ?? false),
     ];
 }
 
@@ -131,7 +131,7 @@ table{width:100%;border-collapse:collapse}th,td{border-bottom:1px solid #eee;pad
 <td><?php if ($r['latest_shot'] !== ''): ?><a target="_blank" href="<?php echo htmlspecialchars($r['latest_shot'], ENT_QUOTES, 'UTF-8'); ?>">查看</a><?php else: ?><span class="muted">无</span><?php endif; ?></td>
 <td>
 <form method="post" style="display:inline"><input type="hidden" name="student_id" value="<?php echo htmlspecialchars($r['student_id'], ENT_QUOTES, 'UTF-8'); ?>"><input type="hidden" name="action" value="terminate"><input type="hidden" name="value" value="1"><button class="btn" type="submit">终止答题</button></form>
-<form method="post" style="display:inline"><input type="hidden" name="student_id" value="<?php echo htmlspecialchars($r['student_id'], ENT_QUOTES, 'UTF-8'); ?>"><input type="hidden" name="action" value="realtime_screenshot"><input type="hidden" name="value" value="<?php echo $r['cmd_shot'] ? '0' : '1'; ?>"><button class="btn" type="submit"><?php echo $r['cmd_shot'] ? '停止截屏' : '实时截屏'; ?></button></form>
+<form method="post" style="display:inline"><input type="hidden" name="student_id" value="<?php echo htmlspecialchars($r['student_id'], ENT_QUOTES, 'UTF-8'); ?>"><input type="hidden" name="action" value="screenshot_once"><input type="hidden" name="value" value="1"><button class="btn" type="submit">截屏</button></form>
 </td>
 </tr>
 <?php endforeach; endif; ?>

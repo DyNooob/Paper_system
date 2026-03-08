@@ -17,9 +17,7 @@ $exams = load_exams(__DIR__);
 if (!isset($exams[$examId])) {
     send_json(['ok' => false, 'error' => 'exam not found'], 200);
 }
-$exam = $exams[$examId];
-$examPass = (string)($exam['passkey'] ?? '');
-
+$examPass = (string)($exams[$examId]['passkey'] ?? '');
 $auth = ($passkey !== '' && $passkey === $examPass) || ($token !== '' && verify_token($token, $examId, $examPass, $ip, get_secret(__DIR__)));
 if (!$auth) {
     send_json(['ok' => false, 'error' => 'auth failed'], 200);
@@ -30,19 +28,18 @@ if (!isset($commands['students']) || !is_array($commands['students'])) {
     $commands['students'] = [];
 }
 if (!isset($commands['students'][$studentId]) || !is_array($commands['students'][$studentId])) {
-    $commands['students'][$studentId] = ['terminate' => false, 'realtime_screenshot' => false];
+    $commands['students'][$studentId] = ['terminate' => false, 'screenshot_once' => false];
 }
 
 if ($mode === 'set') {
     $action = trim((string)($_POST['action'] ?? $_GET['action'] ?? ''));
     $value = (string)($_POST['value'] ?? $_GET['value'] ?? '1');
-    $flag = in_array(strtolower($value), ['1', 'true', 'on', 'yes'], true);
-    if (!in_array($action, ['terminate', 'realtime_screenshot'], true)) {
+    if (!in_array($action, ['terminate', 'screenshot_once'], true)) {
         send_json(['ok' => false, 'error' => 'unknown action'], 200);
     }
-    $commands['students'][$studentId][$action] = $flag;
+    $commands['students'][$studentId][$action] = in_array(strtolower($value), ['1', 'true', 'on', 'yes'], true);
     save_commands(__DIR__, $examId, $commands);
-    send_json(['ok' => true, 'student_id' => $studentId, 'commands' => $commands['students'][$studentId]], 200);
+    send_json(['ok' => true, 'commands' => $commands['students'][$studentId]], 200);
 }
 
-send_json(['ok' => true, 'student_id' => $studentId, 'commands' => $commands['students'][$studentId]], 200);
+send_json(['ok' => true, 'commands' => $commands['students'][$studentId]], 200);
