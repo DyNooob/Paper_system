@@ -1,0 +1,7 @@
+{
+  "demo-exam": [
+    {"student_id": "2026001", "name": "张三", "class_name": "高三(1)班"},
+    {"student_id": "2026002", "name": "李四", "class_name": "高三(2)班"},
+    {"student_id": "2026003", "name": "王五", "class_name": "高三(3)班"}
+  ]
+}

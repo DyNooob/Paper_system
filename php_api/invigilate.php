@@ -4,7 +4,7 @@ require_once __DIR__ . '/common.php';
 
 $payload = read_json();
 if ($payload === []) {
-    send_json(['ok' => false, 'error' => 'invalid json'], 400);
+    send_json(['ok' => false, 'error' => 'invalid json'], 200);
 }
 
 $examId = trim((string)($payload['exam_id'] ?? ''));
@@ -17,20 +17,19 @@ if ($ip === '') {
 }
 
 if ($examId === '' || $eventType === '') {
-    send_json(['ok' => false, 'error' => 'missing exam_id/event_type'], 400);
+    send_json(['ok' => false, 'error' => 'missing exam_id/event_type'], 200);
 }
 
 $exams = load_exams(__DIR__);
 if (!isset($exams[$examId])) {
-    send_json(['ok' => false, 'error' => 'auth failed'], 403);
+    send_json(['ok' => false, 'error' => 'auth failed: exam_id not exists'], 200);
 }
 $exam = $exams[$examId];
 $examPass = (string)($exam['passkey'] ?? '');
-
 $passOk = ($passkey !== '' && $passkey === $examPass);
 $tokenOk = ($token !== '' && verify_token($token, $examId, $examPass, $ip, get_secret(__DIR__)));
 if (!$passOk && !$tokenOk) {
-    send_json(['ok' => false, 'error' => 'auth failed'], 403);
+    send_json(['ok' => false, 'error' => 'auth failed: token/passkey invalid'], 200);
 }
 
 $student = $payload['student'] ?? [];
@@ -46,6 +45,23 @@ if (!is_array($detail)) {
     $detail = ['raw' => (string)$detail];
 }
 
+$requireLogin = (bool)($exam['require_student_login'] ?? true);
+$roster = get_exam_students(__DIR__, $examId);
+if ($eventType === 'student_login' && $requireLogin) {
+    if ($studentId === '' || $name === '' || $className === '') {
+        send_json(['ok' => false, 'error' => 'student_login missing fields'], 200);
+    }
+    if ($roster !== []) {
+        $matched = find_student_in_roster($roster, $studentId);
+        if ($matched === null) {
+            send_json(['ok' => false, 'error' => 'student not in roster'], 200);
+        }
+        if (trim((string)($matched['name'] ?? '')) !== $name || trim((string)($matched['class_name'] ?? '')) !== $className) {
+            send_json(['ok' => false, 'error' => 'student name/class mismatch'], 200);
+        }
+    }
+}
+
 $record = [
     'server_time' => gmdate('c'),
     'exam_id' => $examId,
@@ -57,33 +73,27 @@ $record = [
     'detail' => $detail,
     'client_time' => (string)($payload['client_time'] ?? ''),
     'platform' => (string)($payload['platform'] ?? ''),
-    'user_agent' => (string)($_SERVER['HTTP_USER_AGENT'] ?? ''),
 ];
 
 try {
     append_log(__DIR__, $examId, $record);
+    $state = load_state(__DIR__, $examId);
+    if (!isset($state['students']) || !is_array($state['students'])) {
+        $state['students'] = [];
+    }
 
     if ($studentId !== '') {
-        $state = load_state(__DIR__, $examId);
-        if (!isset($state['students']) || !is_array($state['students'])) {
-            $state['students'] = [];
-        }
-
-        if (!isset($state['students'][$studentId]) || !is_array($state['students'][$studentId])) {
-            $state['students'][$studentId] = [
-                'student_id' => $studentId,
-                'name' => $name,
-                'class_name' => $className,
-                'login' => false,
-                'last_event' => '',
-                'last_event_time' => '',
-                'abnormal_count' => 0,
-                'abnormal_last' => '',
-                'ip' => $ip,
-            ];
-        }
-
-        $row = $state['students'][$studentId];
+        $row = $state['students'][$studentId] ?? [
+            'student_id' => $studentId,
+            'name' => $name,
+            'class_name' => $className,
+            'login' => false,
+            'last_event' => '',
+            'last_event_time' => '',
+            'abnormal_count' => 0,
+            'abnormal_last' => '',
+            'ip' => $ip,
+        ];
         if ($name !== '') {
             $row['name'] = $name;
         }
@@ -93,30 +103,21 @@ try {
         $row['ip'] = $ip;
         $row['last_event'] = $record['event_type'];
         $row['last_event_time'] = $record['server_time'];
-
         if ($record['event_type'] === 'student_login') {
             $row['login'] = true;
         }
 
-        $abnormalEvents = [
-            'entry_denied_environment',
-            'blocked_process_detected',
-            'blocked_process_killed',
-            'suspicious_key',
-            'shortcut_blocked',
-            'client_close_attempt',
-            'close_blocked',
-        ];
-        if (in_array($record['event_type'], $abnormalEvents, true)) {
+        $abnormal = ['entry_denied_environment', 'blocked_process_detected', 'blocked_process_killed', 'suspicious_key', 'shortcut_blocked', 'client_close_attempt', 'close_blocked'];
+        if (in_array($record['event_type'], $abnormal, true)) {
             $row['abnormal_count'] = (int)($row['abnormal_count'] ?? 0) + 1;
             $row['abnormal_last'] = $record['event_type'];
         }
-
         $state['students'][$studentId] = $row;
-        save_state(__DIR__, $examId, $state);
     }
+
+    save_state(__DIR__, $examId, $state);
 } catch (Throwable $e) {
-    send_json(['ok' => false, 'error' => 'server write error: ' . $e->getMessage()], 500);
+    send_json(['ok' => false, 'error' => 'server write error: ' . $e->getMessage()], 200);
 }
 
-send_json(['ok' => true]);
+send_json(['ok' => true], 200);

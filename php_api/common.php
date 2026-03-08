@@ -15,21 +15,39 @@ function read_json(): array
     if ($raw === false || trim($raw) === '') {
         return [];
     }
-    $x = json_decode($raw, true);
-    return is_array($x) ? $x : [];
+    $decoded = json_decode($raw, true);
+    return is_array($decoded) ? $decoded : [];
+}
+
+function load_json_file(string $file, array $fallback = []): array
+{
+    if (!is_file($file)) {
+        return $fallback;
+    }
+    $decoded = json_decode((string)file_get_contents($file), true);
+    return is_array($decoded) ? $decoded : $fallback;
 }
 
 function load_exams(string $base): array
 {
-    $f = $base . '/exams.json';
-    if (!is_file($f)) {
-        send_json(['ok' => false, 'error' => 'exams.json missing'], 500);
+    $file = $base . '/exams.json';
+    $data = load_json_file($file, []);
+    if ($data === []) {
+        send_json(['ok' => false, 'error' => 'exams.json missing or invalid'], 200);
     }
-    $x = json_decode((string)file_get_contents($f), true);
-    if (!is_array($x)) {
-        send_json(['ok' => false, 'error' => 'exams.json invalid'], 500);
-    }
-    return $x;
+    return $data;
+}
+
+function load_students_map(string $base): array
+{
+    return load_json_file($base . '/students.json', []);
+}
+
+function get_exam_students(string $base, string $examId): array
+{
+    $map = load_students_map($base);
+    $rows = $map[$examId] ?? [];
+    return is_array($rows) ? $rows : [];
 }
 
 function get_secret(string $base): string
@@ -86,27 +104,17 @@ function verify_token(string $token, string $examId, string $passkey, string $ip
     if (!is_string($json) || !is_string($sig)) {
         return false;
     }
-    $expSig = hash_hmac('sha256', $json, $secret, true);
-    if (!hash_equals($expSig, $sig)) {
+    if (!hash_equals(hash_hmac('sha256', $json, $secret, true), $sig)) {
         return false;
     }
     $x = json_decode($json, true);
     if (!is_array($x)) {
         return false;
     }
-    if (($x['exam_id'] ?? '') !== $examId) {
-        return false;
-    }
-    if (($x['passkey_sha'] ?? '') !== hash('sha256', $passkey)) {
-        return false;
-    }
-    if (($x['ip'] ?? '') !== $ip) {
-        return false;
-    }
-    if ((int)($x['exp'] ?? 0) < time()) {
-        return false;
-    }
-    return true;
+    return ($x['exam_id'] ?? '') === $examId
+        && ($x['passkey_sha'] ?? '') === hash('sha256', $passkey)
+        && ($x['ip'] ?? '') === $ip
+        && (int)($x['exp'] ?? 0) >= time();
 }
 
 function ensure_dir(string $dir): void
@@ -126,14 +134,7 @@ function load_state(string $base, string $examId): array
     $dir = $base . '/data';
     ensure_dir($dir);
     $f = $dir . '/' . safe_id($examId) . '_state.json';
-    if (!is_file($f)) {
-        return ['students' => [], 'last_update' => gmdate('c')];
-    }
-    $x = json_decode((string)file_get_contents($f), true);
-    if (!is_array($x)) {
-        return ['students' => [], 'last_update' => gmdate('c')];
-    }
-    return $x;
+    return load_json_file($f, ['students' => [], 'last_update' => gmdate('c')]);
 }
 
 function save_state(string $base, string $examId, array $state): void
@@ -157,4 +158,17 @@ function append_log(string $base, string $examId, array $record): void
     if (file_put_contents($f, $line, FILE_APPEND | LOCK_EX) === false) {
         throw new RuntimeException('write log failed');
     }
+}
+
+function find_student_in_roster(array $roster, string $studentId): ?array
+{
+    foreach ($roster as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        if (trim((string)($row['student_id'] ?? '')) === $studentId) {
+            return $row;
+        }
+    }
+    return null;
 }

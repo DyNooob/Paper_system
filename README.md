@@ -1,102 +1,62 @@
-# Paper System（重写版）
+# Paper System（修正版）
 
-本版本实现了你要求的完整流程：
+本版重点修复：
+- `config.php` 业务错误不再直接返回 HTTP 404（避免客户端被误判成 Nginx 404）。
+- 考试 ID 继续是**自定义**（由 `exams.json` 自行维护）。
+- 支持配置是否需要二次登录（`require_student_login`）。
+- 新增可编辑人员名单：`students.json`（考试ID、姓名、学号、班级）。
 
-1. 输入考试 ID + 密码拉取配置。
-2. **先检查环境冲突（非法设备/非法环境）**。
-3. 通过后进入**考生登录**（考号、姓名、班级）。
-4. 登录成功后进入考试链接。
-5. 监考端 `dashboard.php` 实时查看每个考生是否登录、是否有异常行为。
+## 配置文件
 
----
+### 1) `php_api/exams.json`
+每个考试可配置：
+- `passkey`
+- `exam_url`
+- `require_student_login`（true/false）
+- 环境检测策略（单屏、VM、进程黑名单等）
 
-## 目录
+### 2) `php_api/students.json`（新增）
+格式如下：
 
-- `exam_client.py`：Python 客户端（PySide6 + WebEngine）
-- `php_api/config.php`：下发考试配置 + session token
-- `php_api/invigilate.php`：接收监考事件、更新状态
-- `php_api/dashboard.php`：监考可视化页面
-- `php_api/common.php`：公共函数
-- `php_api/exams.json`：考试配置
-
----
-
-## 客户端能力（按需求重写）
-
-- 配置拉取：`config.php?id=...&passkey=...&ip=...`
-- 环境冲突检查：
-  - 多屏检测（`require_single_monitor`）
-  - 禁用进程检测（可选强杀）
-  - 虚拟机检测（WMIC 关键字）
-  - OS 白名单检查
-- 考生登录信息：
-  - 考号（填写）
-  - 姓名（填写）
-  - 班级（选择，来自配置 `class_options`）
-- 考试期间监考上报：
-  - 登录事件、心跳
-  - 禁用进程触发
-  - 可疑按键与快捷键
-  - 关闭尝试
-
----
-
-## 监考面板
-
-访问：
-
-```text
-http://<host>/dashboard.php?exam_id=demo-exam
+```json
+{
+  "demo-exam": [
+    {"student_id": "2026001", "name": "张三", "class_name": "高三(1)班"}
+  ]
+}
 ```
 
-字段包含：
-- 是否登录
-- 异常次数
-- 最近异常
-- 最后事件与时间
-- IP
+> 说明：当 `require_student_login=true` 且该考试在 `students.json` 中有名单时，客户端登录会进行人员校验（学号+姓名+班级）。
 
----
+## 接口说明
 
-## 安装与运行
+- `config.php?id=xxx&passkey=xxx&ip=xxx`
+  - 成功：`ok=true`
+  - 失败：`ok=false` + `error`（HTTP 状态码仍返回 200，便于客户端展示明确错误）
+- `invigilate.php`
+  - 接收监考事件
+  - `student_login` 时可校验人员名单
 
-### Python 依赖
+## 监考页面
+
+`dashboard.php?exam_id=demo-exam`
+
+可查看：
+- 名单人员是否已登录
+- 异常次数/最近异常
+- 最后事件、时间、IP
+
+## 运行
 
 ```bash
 pip install -r requirements.txt
-```
-
-### 启动客户端
-
-```bash
 python exam_client.py
-```
-
-### 启动 PHP
-
-```bash
 php -S 0.0.0.0:8080 -t php_api
 ```
 
-测试配置接口：
-
-```text
-http://127.0.0.1:8080/config.php?id=demo-exam&passkey=123456&ip=127.0.0.1
-```
-
----
-
-## 打包单 EXE
+## 打包
 
 ```bash
 pip install pyinstaller
 pyinstaller --noconfirm --onefile --windowed exam_client.py
 ```
-
----
-
-## 生产建议
-
-- 设置 `PAPER_API_SECRET`（或 `php_api/secret.key`）。
-- 把 `exams.json` 放到受控目录，限制访问权限。
-- 高风险考试建议结合系统级手段（Kiosk/GPO/终端管控）。
