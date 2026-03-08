@@ -32,3 +32,19 @@ php -S 0.0.0.0:8080 -t php_api
 ```text
 http://127.0.0.1:8080/dashboard.php?exam_id=demo-exam&passkey=123456
 ```
+
+
+## 打包体积与启动速度优化（Windows）
+
+你反馈 onefile 体积大（200MB+）且启动慢，这个是 PyInstaller onefile 解包机制导致的常见现象。建议：
+
+1. 优先使用 **onedir**（启动快很多）。
+2. 使用 `build_windows.bat` 进行裁剪构建。
+3. 若安装了 UPX，设置 `UPX_DIR` 后可进一步压缩。
+
+```bat
+set UPX_DIR=C:\upx
+build_windows.bat
+```
+
+> 注意：`QtWebEngine` 本身资源体积较大，极限压缩空间有限，但 onedir 启动速度会显著优于 onefile。
