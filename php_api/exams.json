@@ -1,0 +1,17 @@
+{
+  "demo-exam": {
+    "passkey": "123456",
+    "exam_url": "https://example.com/paper.html",
+    "force_fullscreen": true,
+    "top_most": true,
+    "require_single_monitor": true,
+    "allow_force_kill": false,
+    "blocked_processes": ["chrome.exe", "msedge.exe", "qq.exe", "wechat.exe", "teamviewer.exe", "obs64.exe", "snippingtool.exe"],
+    "detect_vm": true,
+    "allowed_os": ["windows"],
+    "class_options": ["高三(1)班", "高三(2)班", "高三(3)班"],
+    "heartbeat_interval_sec": 20,
+    "process_scan_interval_sec": 3,
+    "session_ttl_sec": 21600
+  }
+}
