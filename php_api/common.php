@@ -232,6 +232,7 @@ function event_label(string $eventType): string
         'heartbeat' => '心跳',
         'exam_exit' => '主动退出考试',
         'terminated_by_admin' => '监考员终止答题',
+        'terminated_by_system' => '系统强制终止',
         'screenshot_frame' => '实时截图',
         'process_report' => '进程快照上报',
     ];
@@ -240,6 +241,6 @@ function event_label(string $eventType): string
 
 function is_cheat_event(string $eventType): bool
 {
-    $cheat = ['suspicious_key', 'shortcut_blocked', 'focus_lost', 'blocked_process_detected', 'entry_denied_environment', 'exam_exit'];
+    $cheat = ['suspicious_key', 'shortcut_blocked', 'focus_lost', 'blocked_process_detected', 'entry_denied_environment'];
     return in_array($eventType, $cheat, true);
 }

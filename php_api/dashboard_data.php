@@ -26,7 +26,7 @@ foreach ($roster as $entry) {
     $sid = trim((string)($entry['student_id'] ?? ''));
     if ($sid === '') continue;
     $saved = $stateStudents[$sid] ?? [];
-    $commands = $cmdStudents[$sid] ?? ['terminate' => false, 'screenshot_once' => false, 'process_report_once' => false, 'notice_message' => ''];
+    $commands = $cmdStudents[$sid] ?? ['terminate' => false, 'terminate_reason' => '', 'screenshot_once' => false, 'process_report_once' => false, 'notice_message' => ''];
     $rows[] = [
         'student_id' => $sid,
         'name' => (string)($saved['name'] ?? $entry['name'] ?? ''),
@@ -40,8 +40,8 @@ foreach ($roster as $entry) {
         'last_event_time' => (string)($saved['last_event_time'] ?? ''),
         'latest_shot' => (string)($saved['latest_shot'] ?? ''),
 
-        'status' => (string)($saved['status'] ?? ((bool)($saved['locked_out'] ?? false) ? 'locked' : (((bool)($saved['login'] ?? false)) ? 'answering' : 'not_logged_in'))),
-        'status_label' => (string)($saved['status_label'] ?? ((bool)($saved['locked_out'] ?? false) ? '已锁定' : (((bool)($saved['login'] ?? false)) ? '作答中' : '未登录'))),
+        'status' => (string)($saved['status'] ?? ((bool)($saved['locked_out'] ?? false) ? 'terminated' : (((bool)($saved['login'] ?? false)) ? 'answering' : 'not_logged_in'))),
+        'status_label' => (string)($saved['status_label'] ?? ((bool)($saved['locked_out'] ?? false) ? '强制结束' : (((bool)($saved['login'] ?? false)) ? '作答中' : '未登录'))),
         'status_color' => (string)($saved['status_color'] ?? ((bool)($saved['locked_out'] ?? false) ? 'red' : (((bool)($saved['login'] ?? false)) ? 'orange' : 'gray'))),
         'cmd' => $commands,
     ];
@@ -63,10 +63,10 @@ foreach ($stateStudents as $sid => $saved) {
         'last_event_time' => (string)($saved['last_event_time'] ?? ''),
         'latest_shot' => (string)($saved['latest_shot'] ?? ''),
 
-        'status' => (string)($saved['status'] ?? ((bool)($saved['locked_out'] ?? false) ? 'locked' : (((bool)($saved['login'] ?? false)) ? 'answering' : 'not_logged_in'))),
-        'status_label' => (string)($saved['status_label'] ?? ((bool)($saved['locked_out'] ?? false) ? '已锁定' : (((bool)($saved['login'] ?? false)) ? '作答中' : '未登录'))),
+        'status' => (string)($saved['status'] ?? ((bool)($saved['locked_out'] ?? false) ? 'terminated' : (((bool)($saved['login'] ?? false)) ? 'answering' : 'not_logged_in'))),
+        'status_label' => (string)($saved['status_label'] ?? ((bool)($saved['locked_out'] ?? false) ? '强制结束' : (((bool)($saved['login'] ?? false)) ? '作答中' : '未登录'))),
         'status_color' => (string)($saved['status_color'] ?? ((bool)($saved['locked_out'] ?? false) ? 'red' : (((bool)($saved['login'] ?? false)) ? 'orange' : 'gray'))),
-        'cmd' => $cmdStudents[$sid] ?? ['terminate' => false, 'screenshot_once' => false, 'process_report_once' => false, 'notice_message' => ''],
+        'cmd' => $cmdStudents[$sid] ?? ['terminate' => false, 'terminate_reason' => '', 'screenshot_once' => false, 'process_report_once' => false, 'notice_message' => ''],
     ];
 }
 

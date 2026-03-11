@@ -47,7 +47,7 @@ if (!isset($commands['students']) || !is_array($commands['students'])) {
     $commands['students'] = [];
 }
 if (!isset($commands['students'][$studentId]) || !is_array($commands['students'][$studentId])) {
-    $commands['students'][$studentId] = ['terminate' => false, 'screenshot_once' => false, 'process_report_once' => false, 'notice_message' => ''];
+    $commands['students'][$studentId] = ['terminate' => false, 'terminate_reason' => '', 'screenshot_once' => false, 'process_report_once' => false, 'notice_message' => ''];
 }
 
 if ($mode === 'set') {
@@ -60,6 +60,9 @@ if ($mode === 'set') {
         $commands['students'][$studentId][$action] = substr(trim($value), 0, 200);
     } else {
         $commands['students'][$studentId][$action] = in_array(strtolower($value), ['1', 'true', 'on', 'yes'], true);
+        if ($action === 'terminate') {
+            $commands['students'][$studentId]['terminate_reason'] = $commands['students'][$studentId][$action] ? 'admin_manual_terminate' : '';
+        }
     }
     save_commands(__DIR__, $examId, $commands);
     send_json(['ok' => true, 'commands' => $commands['students'][$studentId]], 200);

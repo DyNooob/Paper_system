@@ -520,6 +520,8 @@ class ExamWindow(QtWidgets.QMainWindow):
         self.proc_stop = threading.Event()
         self.proc_thread = threading.Thread(target=self.proc_watch_loop, daemon=True)
         self.proc_thread.start()
+        self.notice_dialog_open = False
+        self.suspend_focus_guard_until = 0.0
 
         if cfg.force_fullscreen:
             self.showFullScreen()
@@ -535,13 +537,21 @@ class ExamWindow(QtWidgets.QMainWindow):
         self.inv.send_event("session_state", {"login": False, "locked_out": True, "reason": reason})
         self.proc_stop.set()
         self.setEnabled(False)
-        QtWidgets.QMessageBox.information(self, "考试结束", "考试已结束，客户端将退出。")
+        if event_type == "terminated_by_admin":
+            msg = "考试已被监考员强制结束。"
+        elif event_type == "terminated_by_system":
+            msg = "因多次违规操作被考试系统检测到，已强制终止考试。"
+        elif event_type == "exam_exit":
+            msg = "你已确认退出考试，考试已结束。"
+        else:
+            msg = "考试已结束，客户端将退出。"
+        self.show_safe_message("information", "考试结束", msg)
         QtWidgets.QApplication.instance().quit()
 
     def on_escape_exit(self) -> None:
         if self.ended or not self.cfg.allow_exit_hotkey:
             return
-        c = QtWidgets.QMessageBox.question(self, "确认退出", "确认退出考试？退出后不可再次进入。")
+        c = self.ask_safe_question("确认退出", "确认退出考试？退出后将无法再次进入本场考试。")
         if c == QtWidgets.QMessageBox.Yes:
             self.force_end_exam("student_confirm_exit", "exam_exit")
 
@@ -550,13 +560,17 @@ class ExamWindow(QtWidgets.QMainWindow):
         cmd = self.inv.pull_command()
         if cmd.get("notice_message"):
             msg = str(cmd.get("notice_message", "")).strip()
-            if msg:
-                QtWidgets.QMessageBox.warning(self, "监考通知", msg)
+            self.inv.ack_command("notice_message", "")
+            if msg and not self.notice_dialog_open:
+                self.notice_dialog_open = True
+                self.show_safe_message("warning", "监考通知", msg)
+                self.notice_dialog_open = False
                 self.inv.send_event("admin_notice_ack", {"notice": msg})
-                self.inv.ack_command("notice_message", "")
         if cmd.get("terminate"):
             self.inv.ack_command("terminate", False)
-            self.force_end_exam("admin_terminate", "terminated_by_admin")
+            reason = str(cmd.get("terminate_reason") or "admin_terminate")
+            event = "terminated_by_system" if reason == "auto_cheat_terminate" else "terminated_by_admin"
+            self.force_end_exam(reason, event)
             return
         if cmd.get("screenshot_once"):
             self.capture_full_system_once()
@@ -568,6 +582,8 @@ class ExamWindow(QtWidgets.QMainWindow):
     def focus_guard(self) -> None:
         if not self.cfg.focus_guard or self.ended:
             return
+        if time.time() < self.suspend_focus_guard_until:
+            return
         active = self.isActiveWindow()
         full = self.windowState() == QtCore.Qt.WindowFullScreen
         if not active or (self.cfg.force_fullscreen and not full):
@@ -576,6 +592,20 @@ class ExamWindow(QtWidgets.QMainWindow):
                 self.showFullScreen()
             self.raise_()
             self.activateWindow()
+
+    def show_safe_message(self, level: str, title: str, text: str) -> None:
+        self.suspend_focus_guard_until = max(self.suspend_focus_guard_until, time.time() + 2.0)
+        if level == "warning":
+            QtWidgets.QMessageBox.warning(self, title, text)
+        else:
+            QtWidgets.QMessageBox.information(self, title, text)
+        self.suspend_focus_guard_until = max(self.suspend_focus_guard_until, time.time() + 1.0)
+
+    def ask_safe_question(self, title: str, text: str) -> int:
+        self.suspend_focus_guard_until = max(self.suspend_focus_guard_until, time.time() + 3.0)
+        ans = QtWidgets.QMessageBox.question(self, title, text)
+        self.suspend_focus_guard_until = max(self.suspend_focus_guard_until, time.time() + 1.0)
+        return ans
 
     def capture_full_system_once(self) -> None:
         screen = QtGui.QGuiApplication.primaryScreen()

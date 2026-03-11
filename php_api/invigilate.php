@@ -168,8 +168,22 @@ try {
         if ($eventType === 'exam_exit' || $eventType === 'terminated_by_admin') {
             $row['locked_out'] = true;
             $row['login'] = false;
-            $row['status'] = 'locked';
-            $row['status_label'] = '已锁定';
+            if ($eventType === 'exam_exit') {
+                $row['status'] = 'finished';
+                $row['status_label'] = '已完成';
+                $row['status_color'] = 'green';
+            } else {
+                $row['status'] = 'terminated';
+                $row['status_label'] = '强制结束';
+                $row['status_color'] = 'red';
+            }
+        }
+        if ($eventType === 'terminated_by_system') {
+            $row['locked_out'] = true;
+            $row['login'] = false;
+            $row['terminated_by_cheat'] = true;
+            $row['status'] = 'terminated';
+            $row['status_label'] = '作弊终止';
             $row['status_color'] = 'red';
         }
         if ($eventType === 'exam_finished') {
@@ -208,7 +222,7 @@ try {
         if ($isCheat && $warnThreshold > 0 && $abn >= $warnThreshold && empty($row['warned_cheat'])) {
             $cmd = load_commands(__DIR__, $examId);
             if (!isset($cmd['students'][$studentId]) || !is_array($cmd['students'][$studentId])) {
-                $cmd['students'][$studentId] = ['terminate' => false, 'screenshot_once' => false, 'process_report_once' => false, 'notice_message' => ''];
+                $cmd['students'][$studentId] = ['terminate' => false, 'terminate_reason' => '', 'screenshot_once' => false, 'process_report_once' => false, 'notice_message' => ''];
             }
             $cmd['students'][$studentId]['notice_message'] = '系统警告：检测到多次异常行为，请立即规范作答。';
             save_commands(__DIR__, $examId, $cmd);
@@ -231,15 +245,18 @@ try {
         if ($isCheat && $termThreshold > 0 && $abn >= $termThreshold && empty($row['terminated_by_cheat'])) {
             $cmd = load_commands(__DIR__, $examId);
             if (!isset($cmd['students'][$studentId]) || !is_array($cmd['students'][$studentId])) {
-                $cmd['students'][$studentId] = ['terminate' => false, 'screenshot_once' => false, 'process_report_once' => false, 'notice_message' => ''];
+                $cmd['students'][$studentId] = ['terminate' => false, 'terminate_reason' => '', 'screenshot_once' => false, 'process_report_once' => false, 'notice_message' => ''];
             }
             $cmd['students'][$studentId]['terminate'] = true;
-            $cmd['students'][$studentId]['notice_message'] = '考试已因作弊行为自动终止。';
+            $cmd['students'][$studentId]['terminate_reason'] = 'auto_cheat_terminate';
+            $cmd['students'][$studentId]['notice_message'] = '因多次违规操作被考试系统检测到，已强制终止考试。';
             save_commands(__DIR__, $examId, $cmd);
             $row['terminated_by_cheat'] = true;
-            $row['status'] = 'ended';
-            $row['status_label'] = '已结束';
-            $row['status_color'] = 'yellow';
+            $row['locked_out'] = true;
+            $row['login'] = false;
+            $row['status'] = 'terminated';
+            $row['status_label'] = '作弊终止';
+            $row['status_color'] = 'red';
             $state['events'][] = [
                 'server_time' => gmdate('c'),
                 'exam_id' => $examId,
@@ -257,8 +274,8 @@ try {
 
         if (empty($row['status_label']) || empty($row['status_color'])) {
             if (!empty($row['locked_out'])) {
-                $row['status'] = 'locked';
-                $row['status_label'] = '已锁定';
+                $row['status'] = 'terminated';
+                $row['status_label'] = '强制结束';
                 $row['status_color'] = 'red';
             } elseif (!empty($row['login'])) {
                 $row['status'] = 'answering';
