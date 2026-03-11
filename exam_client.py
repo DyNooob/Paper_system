@@ -345,6 +345,97 @@ class KeyMonitor(QtCore.QObject):
         return False
 
 
+
+
+class WindowsLowLevelKeyHook:
+    def __init__(self, inv: InvigilatorClient):
+        self.inv = inv
+        self._thread: threading.Thread | None = None
+        self._stop = threading.Event()
+
+    def start(self) -> None:
+        if platform.system().lower() != "windows" or self._thread is not None:
+            return
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+
+    def _run(self) -> None:
+        import ctypes
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+
+        WH_KEYBOARD_LL = 13
+        WM_KEYDOWN = 0x0100
+        WM_SYSKEYDOWN = 0x0104
+        HC_ACTION = 0
+
+        VK_TAB = 0x09
+        VK_ESCAPE = 0x1B
+        VK_F4 = 0x73
+        VK_F12 = 0x7B
+        VK_SNAPSHOT = 0x2C
+        VK_LWIN = 0x5B
+        VK_RWIN = 0x5C
+        VK_MENU = 0x12
+        VK_CONTROL = 0x11
+        VK_SHIFT = 0x10
+
+        class KBDLLHOOKSTRUCT(ctypes.Structure):
+            _fields_ = [("vkCode", ctypes.c_uint32), ("scanCode", ctypes.c_uint32), ("flags", ctypes.c_uint32), ("time", ctypes.c_uint32), ("dwExtraInfo", ctypes.c_void_p)]
+
+        class POINT(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+        class MSG(ctypes.Structure):
+            _fields_ = [("hwnd", ctypes.c_void_p), ("message", ctypes.c_uint), ("wParam", ctypes.c_size_t), ("lParam", ctypes.c_ssize_t), ("time", ctypes.c_uint32), ("pt", POINT), ("lPrivate", ctypes.c_uint32)]
+
+        recent = {}
+        def report(k: str, payload: dict[str, Any]) -> None:
+            import time
+            t = time.time()
+            if t - recent.get(k, 0) > 0.7:
+                recent[k] = t
+                self.inv.send_event("suspicious_key", payload)
+
+        @ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_int, ctypes.c_size_t, ctypes.c_ssize_t)
+        def proc(n_code, w_param, l_param):
+            if n_code == HC_ACTION and w_param in (WM_KEYDOWN, WM_SYSKEYDOWN):
+                kb = ctypes.cast(l_param, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+                vk = kb.vkCode
+                alt = bool(user32.GetAsyncKeyState(VK_MENU) & 0x8000)
+                ctrl = bool(user32.GetAsyncKeyState(VK_CONTROL) & 0x8000)
+                shift = bool(user32.GetAsyncKeyState(VK_SHIFT) & 0x8000)
+
+                if vk in (VK_LWIN, VK_RWIN):
+                    report('win', {"shortcut":"Win","description":"尝试Win键操作","is_cheat":True})
+                elif alt and vk == VK_TAB:
+                    report('alttab', {"shortcut":"Alt+Tab","description":"尝试切屏","is_cheat":True})
+                elif alt and vk == VK_F4:
+                    report('altf4', {"shortcut":"Alt+F4","description":"尝试关闭考试窗口","is_cheat":True})
+                elif ctrl and shift and vk == VK_ESCAPE:
+                    report('ctrlshiftesc', {"shortcut":"Ctrl+Shift+Esc","description":"尝试打开任务管理器","is_cheat":True})
+                elif ctrl and vk == VK_ESCAPE:
+                    report('ctrlesc', {"shortcut":"Ctrl+Esc","description":"尝试打开开始菜单","is_cheat":True})
+                elif vk == VK_SNAPSHOT:
+                    report('print', {"shortcut":"Print","description":"尝试截图","is_cheat":True})
+                elif vk == VK_F12:
+                    report('f12', {"shortcut":"F12","description":"尝试开发者工具","is_cheat":True})
+            return user32.CallNextHookEx(None, n_code, w_param, l_param)
+
+        hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, proc, kernel32.GetModuleHandleW(None), 0)
+        if not hook:
+            return
+
+        msg = MSG()
+        while not self._stop.is_set() and user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+
+        user32.UnhookWindowsHookEx(hook)
+
 class ExamWindow(QtWidgets.QMainWindow):
     def __init__(self, cfg: ExamConfig, inv: InvigilatorClient):
         super().__init__()
@@ -533,9 +624,12 @@ def main() -> int:
     inv.send_event("process_report", {"reason": "first_login", "processes": list_processes_windows(250)})
 
     app.installEventFilter(KeyMonitor(inv))
+    low_hook = WindowsLowLevelKeyHook(inv)
+    low_hook.start()
 
     w = ExamWindow(cfg, inv)
     rc = app.exec()
+    low_hook.stop()
     inv.send_event("client_exit", {"code": rc})
     inv.close()
     return rc

@@ -62,6 +62,7 @@ function savePasskey(){passkey=document.getElementById('passkey').value.trim();l
 
 async function sendCmd(studentId, action, value='1') {
   if(!passkey){toast('请先填写 passkey');return}
+  if(action==='terminate' && !confirm('确认终止该考生考试？')) return;
   const url = `command.php?mode=set&exam_id=${encodeURIComponent(examId)}&student_id=${encodeURIComponent(studentId)}&passkey=${encodeURIComponent(passkey)}&action=${encodeURIComponent(action)}&value=${encodeURIComponent(value)}`;
   const res = await fetch(url);
   const data = await res.json();

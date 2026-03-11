@@ -14,23 +14,42 @@ if ($id === '' || $passkey === '') {
 }
 
 $exams = load_exams(__DIR__);
-if (!isset($exams[$id])) {
+$exam = null;
+$resolvedId = $id;
+
+if (isset($exams[$id]) && is_array($exams[$id])) {
+    $exam = $exams[$id];
+} else {
+    foreach ($exams as $k => $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        if ((string)($row['id'] ?? '') === $id) {
+            $exam = $row;
+            $resolvedId = (string)$k;
+            break;
+        }
+    }
+}
+
+if ($exam === null) {
     send_json([
         'ok' => false,
         'error' => 'exam not found',
         'exam_id' => $id,
-        'available_ids' => array_keys($exams),
+        'available_ids' => array_values(array_map(static function ($k, $v) {
+            $vid = is_array($v) ? (string)($v['id'] ?? '') : '';
+            return $vid !== '' ? $vid : (string)$k;
+        }, array_keys($exams), $exams)),
     ], 200);
 }
-
-$exam = $exams[$id];
 if (($exam['passkey'] ?? '') !== $passkey) {
     send_json(['ok' => false, 'error' => 'invalid passkey', 'exam_id' => $id], 200);
 }
 
 $ttl = max(60, (int)($exam['session_ttl_sec'] ?? 21600));
 $exp = time() + $ttl;
-$token = create_token($id, $passkey, $ip, $exp, get_secret(__DIR__));
+$token = create_token($resolvedId, $passkey, $ip, $exp, get_secret(__DIR__));
 
 send_json([
     'ok' => true,
