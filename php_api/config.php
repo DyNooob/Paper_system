@@ -3,13 +3,13 @@ declare(strict_types=1);
 require_once __DIR__ . '/common.php';
 
 $id = trim((string)($_GET['id'] ?? $_GET['exam_id'] ?? ''));
-$passkey = trim((string)($_GET['passkey'] ?? $_GET['key'] ?? ''));
+$studentPasskey = trim((string)($_GET['passkey'] ?? $_GET['key'] ?? ''));
 $ip = trim((string)($_GET['ip'] ?? ''));
 if ($ip === '') {
     $ip = (string)($_SERVER['REMOTE_ADDR'] ?? '');
 }
 
-if ($id === '' || $passkey === '') {
+if ($id === '' || $studentPasskey === '') {
     send_json(['ok' => false, 'error' => 'missing id/passkey'], 200);
 }
 
@@ -29,13 +29,14 @@ if (!$resolved['ok'] || $exam === null) {
         }, array_keys($exams), $exams)),
     ], 200);
 }
-if (($exam['passkey'] ?? '') !== $passkey) {
-    send_json(['ok' => false, 'error' => 'invalid passkey', 'exam_id' => $id], 200);
+$studentPass = get_student_passkey($exam);
+if ($studentPass === '' || $studentPass !== $studentPasskey) {
+    send_json(['ok' => false, 'error' => 'invalid student passkey', 'exam_id' => $id], 200);
 }
 
 $ttl = max(60, (int)($exam['session_ttl_sec'] ?? 21600));
 $exp = time() + $ttl;
-$token = create_token($resolvedId, $passkey, $ip, $exp, get_secret(__DIR__));
+$token = create_token($resolvedId, $studentPass, $ip, $exp, get_secret(__DIR__));
 
 send_json([
     'ok' => true,
@@ -55,6 +56,9 @@ send_json([
         'exit_hotkey' => (string)($exam['exit_hotkey'] ?? 'Esc'),
         'focus_guard' => (bool)($exam['focus_guard'] ?? true),
         'allow_realtime_screenshot_control' => (bool)($exam['allow_realtime_screenshot_control'] ?? true),
+        'key_rules' => array_values($exam['key_rules'] ?? []),
+        'auto_warn_cheat_count' => max(0, (int)($exam['auto_warn_cheat_count'] ?? 0)),
+        'auto_terminate_cheat_count' => max(0, (int)($exam['auto_terminate_cheat_count'] ?? 0)),
         'class_options' => array_values($exam['class_options'] ?? []),
         'heartbeat_interval_sec' => max(5, (int)($exam['heartbeat_interval_sec'] ?? 20)),
         'process_scan_interval_sec' => max(1, (int)($exam['process_scan_interval_sec'] ?? 3)),

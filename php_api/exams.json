@@ -1,6 +1,8 @@
 {
   "demo-exam": {
-    "passkey": "123456",
+    "id": "1",
+    "student_passkey": "123456",
+    "admin_passkey": "admin123",
     "exam_url": "https://example.com/paper.html",
     "force_fullscreen": true,
     "top_most": true,
@@ -16,24 +18,29 @@
       "snippingtool.exe"
     ],
     "detect_vm": true,
-    "allowed_os": [
-      "windows"
-    ],
+    "allowed_os": ["windows"],
     "require_student_login": true,
     "max_login_attempts_per_student": 1,
     "allow_exit_hotkey": true,
     "exit_hotkey": "Esc",
     "focus_guard": true,
     "allow_realtime_screenshot_control": true,
-    "class_options": [
-      "高三(1)班",
-      "高三(2)班",
-      "高三(3)班"
-    ],
+    "class_options": ["高三(1)班", "高三(2)班", "高三(3)班"],
     "heartbeat_interval_sec": 12,
     "process_scan_interval_sec": 3,
     "focus_check_interval_sec": 1,
     "session_ttl_sec": 21600,
-    "id": "1"
+    "auto_warn_cheat_count": 3,
+    "auto_terminate_cheat_count": 6,
+    "key_rules": [
+      "F12",
+      "Print",
+      "Alt+F4",
+      "Ctrl+Shift+Esc",
+      "Ctrl+Esc",
+      "Alt+Tab",
+      "Alt+Esc",
+      "Win"
+    ]
   }
 }

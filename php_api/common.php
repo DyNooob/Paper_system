@@ -49,6 +49,24 @@ function load_exams(string $base): array
     return $data;
 }
 
+function get_student_passkey(array $exam): string
+{
+    $v = trim((string)($exam['student_passkey'] ?? ''));
+    if ($v !== '') {
+        return $v;
+    }
+    return trim((string)($exam['passkey'] ?? ''));
+}
+
+function get_admin_passkey(array $exam): string
+{
+    $v = trim((string)($exam['admin_passkey'] ?? ''));
+    if ($v !== '') {
+        return $v;
+    }
+    return trim((string)($exam['passkey'] ?? ''));
+}
+
 
 
 function resolve_exam(array $exams, string $inputId): array

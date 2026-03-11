@@ -26,7 +26,7 @@ foreach ($roster as $entry) {
     $sid = trim((string)($entry['student_id'] ?? ''));
     if ($sid === '') continue;
     $saved = $stateStudents[$sid] ?? [];
-    $commands = $cmdStudents[$sid] ?? ['terminate' => false, 'screenshot_once' => false, 'process_report_once' => false];
+    $commands = $cmdStudents[$sid] ?? ['terminate' => false, 'screenshot_once' => false, 'process_report_once' => false, 'notice_message' => ''];
     $rows[] = [
         'student_id' => $sid,
         'name' => (string)($saved['name'] ?? $entry['name'] ?? ''),
@@ -39,6 +39,10 @@ foreach ($roster as $entry) {
         'last_event' => (string)($saved['last_event'] ?? ''),
         'last_event_time' => (string)($saved['last_event_time'] ?? ''),
         'latest_shot' => (string)($saved['latest_shot'] ?? ''),
+
+        'status' => (string)($saved['status'] ?? ((bool)($saved['locked_out'] ?? false) ? 'locked' : (((bool)($saved['login'] ?? false)) ? 'answering' : 'not_logged_in'))),
+        'status_label' => (string)($saved['status_label'] ?? ((bool)($saved['locked_out'] ?? false) ? '已锁定' : (((bool)($saved['login'] ?? false)) ? '作答中' : '未登录'))),
+        'status_color' => (string)($saved['status_color'] ?? ((bool)($saved['locked_out'] ?? false) ? 'red' : (((bool)($saved['login'] ?? false)) ? 'orange' : 'gray'))),
         'cmd' => $commands,
     ];
 }
@@ -58,7 +62,11 @@ foreach ($stateStudents as $sid => $saved) {
         'last_event' => (string)($saved['last_event'] ?? ''),
         'last_event_time' => (string)($saved['last_event_time'] ?? ''),
         'latest_shot' => (string)($saved['latest_shot'] ?? ''),
-        'cmd' => $cmdStudents[$sid] ?? ['terminate' => false, 'screenshot_once' => false, 'process_report_once' => false],
+
+        'status' => (string)($saved['status'] ?? ((bool)($saved['locked_out'] ?? false) ? 'locked' : (((bool)($saved['login'] ?? false)) ? 'answering' : 'not_logged_in'))),
+        'status_label' => (string)($saved['status_label'] ?? ((bool)($saved['locked_out'] ?? false) ? '已锁定' : (((bool)($saved['login'] ?? false)) ? '作答中' : '未登录'))),
+        'status_color' => (string)($saved['status_color'] ?? ((bool)($saved['locked_out'] ?? false) ? 'red' : (((bool)($saved['login'] ?? false)) ? 'orange' : 'gray'))),
+        'cmd' => $cmdStudents[$sid] ?? ['terminate' => false, 'screenshot_once' => false, 'process_report_once' => false, 'notice_message' => ''],
     ];
 }
 
@@ -75,10 +83,15 @@ if ($studentId !== '') {
     }
 }
 
+$policy = is_array($state['policy'] ?? null) ? $state['policy'] : [];
 send_json([
     'ok' => true,
     'exam_id' => $examId,
     'last_update' => (string)($state['last_update'] ?? ''),
     'students' => $rows,
     'detail' => $detail,
+    'policy' => [
+        'auto_warn_cheat_count' => (int)($policy['auto_warn_cheat_count'] ?? ($resolved['exam']['auto_warn_cheat_count'] ?? 0)),
+        'auto_terminate_cheat_count' => (int)($policy['auto_terminate_cheat_count'] ?? ($resolved['exam']['auto_terminate_cheat_count'] ?? 0)),
+    ],
 ]);

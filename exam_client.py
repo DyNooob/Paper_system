@@ -55,6 +55,7 @@ class ExamConfig:
     heartbeat_interval_sec: int = 12
     process_scan_interval_sec: int = 3
     focus_check_interval_sec: int = 1
+    key_rules: list[str] = field(default_factory=lambda: ["F12", "Print", "Alt+F4", "Ctrl+Shift+Esc", "Ctrl+Esc", "Alt+Tab", "Alt+Esc", "Win"])
 
 
 class InvigilatorClient:
@@ -137,7 +138,7 @@ class InvigilatorClient:
             pass
         return {}
 
-    def ack_command(self, action: str, value: bool) -> None:
+    def ack_command(self, action: str, value: Any) -> None:
         if not self.student:
             return
         try:
@@ -150,7 +151,7 @@ class InvigilatorClient:
                     "token": self.token or "",
                     "ip": self.ip,
                     "action": action,
-                    "value": "1" if value else "0",
+                    "value": str(value),
                 },
                 timeout=5,
             )
@@ -251,6 +252,7 @@ def load_config(exam_id: str, passkey: str, ip: str, api_base: str) -> tuple[Exa
         heartbeat_interval_sec=max(5, int(c.get("heartbeat_interval_sec", 12))),
         process_scan_interval_sec=max(1, int(c.get("process_scan_interval_sec", 3))),
         focus_check_interval_sec=max(1, int(c.get("focus_check_interval_sec", 1))),
+        key_rules=[str(x) for x in c.get("key_rules", ["F12", "Print", "Alt+F4", "Ctrl+Shift+Esc", "Ctrl+Esc", "Alt+Tab", "Alt+Esc", "Win"])],
     ), d.get("session_token"), resolved_exam_id
 
 
@@ -304,7 +306,7 @@ class LoginDialog(QtWidgets.QDialog):
         self.api_base = QtWidgets.QLineEdit(self)
         self.api_base.setText(DEFAULT_API_BASE)
         form.addRow("考试 ID", self.exam_id)
-        form.addRow("考试密码", self.passkey)
+        form.addRow("学生登录密码", self.passkey)
         form.addRow("API Base", self.api_base)
         btn = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel, parent=self)
         btn.accepted.connect(self.accept)
@@ -334,10 +336,18 @@ class StudentLoginDialog(QtWidgets.QDialog):
 
 
 class KeyMonitor(QtCore.QObject):
-    def __init__(self, inv: InvigilatorClient):
+    def __init__(self, inv: InvigilatorClient, rules: list[str]):
         super().__init__()
         self.inv = inv
         self._last_sent: dict[str, float] = {}
+        self.rules = {self.normalize_shortcut(x) for x in rules if str(x).strip()}
+
+    @staticmethod
+    def normalize_shortcut(shortcut: str) -> str:
+        s = shortcut.strip().replace(" ", "")
+        s = s.replace("Control", "Ctrl")
+        s = s.replace("Meta", "Win")
+        return s
 
     def _emit(self, shortcut: str, desc: str) -> None:
         now = QtCore.QDateTime.currentDateTimeUtc().toMSecsSinceEpoch() / 1000.0
@@ -354,35 +364,24 @@ class KeyMonitor(QtCore.QObject):
             return False
         key = int(event.key())
         mods = event.modifiers()
-        shortcut = QtGui.QKeySequence(int(mods) | key).toString() or f"key_{key}"
-
-        desc = None
-        if key == int(QtCore.Qt.Key_F12):
-            desc = "尝试开发者工具"
-        elif key == int(QtCore.Qt.Key_Print):
-            desc = "尝试截图"
-        elif (mods & QtCore.Qt.AltModifier) and key == int(QtCore.Qt.Key_F4):
-            desc = "尝试关闭考试窗口"
-        elif (mods & QtCore.Qt.ControlModifier) and (mods & QtCore.Qt.ShiftModifier) and key == int(QtCore.Qt.Key_Escape):
-            desc = "尝试打开任务管理器"
-        elif (mods & QtCore.Qt.ControlModifier) and key == int(QtCore.Qt.Key_Escape):
-            desc = "尝试打开开始菜单"
-        elif key in (int(QtCore.Qt.Key_Meta), int(QtCore.Qt.Key_Super_L), int(QtCore.Qt.Key_Super_R)):
-            desc = "尝试Win键操作"
-        elif (mods & QtCore.Qt.AltModifier) and key == int(QtCore.Qt.Key_Tab):
-            desc = "尝试切屏"
-        if desc:
-            self._emit(shortcut, desc)
+        shortcut = self.normalize_shortcut(QtGui.QKeySequence(int(mods) | key).toString() or f"key_{key}")
+        if key in (int(QtCore.Qt.Key_Meta),):
+            shortcut = "Win"
+        if shortcut in self.rules:
+            self._emit(shortcut, f"触发受控按键: {shortcut}")
         return False
 
 
-
-
 class WindowsLowLevelKeyHook:
-    def __init__(self, inv: InvigilatorClient):
+    def __init__(self, inv: InvigilatorClient, rules: list[str]):
         self.inv = inv
         self._thread: threading.Thread | None = None
+        self.rules = {self._norm(x) for x in rules if str(x).strip()}
         self._stop = threading.Event()
+
+    @staticmethod
+    def _norm(s: str) -> str:
+        return s.strip().replace(" ", "").replace("Control", "Ctrl").replace("Meta", "Win")
 
     def start(self) -> None:
         if platform.system().lower() != "windows" or self._thread is not None:
@@ -440,22 +439,25 @@ class WindowsLowLevelKeyHook:
                 ctrl = bool(user32.GetAsyncKeyState(VK_CONTROL) & 0x8000)
                 shift = bool(user32.GetAsyncKeyState(VK_SHIFT) & 0x8000)
 
+                hit = None
                 if vk in (VK_LWIN, VK_RWIN):
-                    report('win', {"shortcut":"Win","description":"尝试Win键操作","is_cheat":True})
+                    hit = 'Win'
                 elif alt and vk == VK_TAB:
-                    report('alttab', {"shortcut":"Alt+Tab","description":"尝试切屏","is_cheat":True})
+                    hit = 'Alt+Tab'
                 elif alt and vk == VK_F4:
-                    report('altf4', {"shortcut":"Alt+F4","description":"尝试关闭考试窗口","is_cheat":True})
+                    hit = 'Alt+F4'
                 elif alt and vk == VK_ESCAPE:
-                    report('altesc', {"shortcut":"Alt+Esc","description":"尝试切换窗口","is_cheat":True})
+                    hit = 'Alt+Esc'
                 elif ctrl and shift and vk == VK_ESCAPE:
-                    report('ctrlshiftesc', {"shortcut":"Ctrl+Shift+Esc","description":"尝试打开任务管理器","is_cheat":True})
+                    hit = 'Ctrl+Shift+Esc'
                 elif ctrl and vk == VK_ESCAPE:
-                    report('ctrlesc', {"shortcut":"Ctrl+Esc","description":"尝试打开开始菜单","is_cheat":True})
+                    hit = 'Ctrl+Esc'
                 elif vk == VK_SNAPSHOT:
-                    report('print', {"shortcut":"Print","description":"尝试截图","is_cheat":True})
+                    hit = 'Print'
                 elif vk == VK_F12:
-                    report('f12', {"shortcut":"F12","description":"尝试开发者工具","is_cheat":True})
+                    hit = 'F12'
+                if hit and self._norm(hit) in self.rules:
+                    report(hit.lower(), {"shortcut":hit,"description":f"触发受控按键: {hit}","is_cheat":True})
             return user32.CallNextHookEx(None, n_code, w_param, l_param)
 
         hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, proc, kernel32.GetModuleHandleW(None), 0)
@@ -499,16 +501,12 @@ class ExamWindow(QtWidgets.QMainWindow):
         self.escape_shortcut.activated.connect(self.on_escape_exit)
 
         self.hotkeys: list[QShortcut] = []
-        for seq, desc in [
-            ("F12", "尝试开发者工具"),
-            ("Print", "尝试截图"),
-            ("Ctrl+Shift+Esc", "尝试打开任务管理器"),
-            ("Ctrl+Esc", "尝试打开开始菜单"),
-            ("Alt+F4", "尝试关闭考试窗口"),
-        ]:
+        for seq in self.cfg.key_rules:
+            if seq.lower() in ('win','alt+tab','alt+esc'):
+                continue
             sc = QShortcut(QKeySequence(seq), self)
             sc.setContext(QtCore.Qt.ApplicationShortcut)
-            sc.activated.connect(lambda d=desc, s=seq: self.inv.send_event("suspicious_key", {"shortcut": s, "description": d, "is_cheat": True}))
+            sc.activated.connect(lambda s=seq: self.inv.send_event("suspicious_key", {"shortcut": s, "description": f"触发受控按键: {s}", "is_cheat": True}))
             self.hotkeys.append(sc)
 
         self.hb = QtCore.QTimer(self)
@@ -550,6 +548,12 @@ class ExamWindow(QtWidgets.QMainWindow):
     def on_heartbeat(self) -> None:
         self.inv.send_event("heartbeat", {"active": self.isActiveWindow()})
         cmd = self.inv.pull_command()
+        if cmd.get("notice_message"):
+            msg = str(cmd.get("notice_message", "")).strip()
+            if msg:
+                QtWidgets.QMessageBox.warning(self, "监考通知", msg)
+                self.inv.send_event("admin_notice_ack", {"notice": msg})
+                self.inv.ack_command("notice_message", "")
         if cmd.get("terminate"):
             self.inv.ack_command("terminate", False)
             self.force_end_exam("admin_terminate", "terminated_by_admin")
@@ -613,6 +617,11 @@ class ExamWindow(QtWidgets.QMainWindow):
 def main() -> int:
     QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_UseSoftwareOpenGL)
     app = QtWidgets.QApplication(sys.argv)
+
+    single_lock = QtCore.QSharedMemory("PaperSystemExamClientSingleton")
+    if not single_lock.create(1):
+        QtWidgets.QMessageBox.warning(None, "提示", "考试客户端已经在运行，请勿重复启动。")
+        return 0
 
     startup = StartupDialog()
     startup.show()
@@ -692,8 +701,9 @@ def main() -> int:
 
     inv.send_event("process_report", {"reason": "first_login", "processes": list_processes_windows(250)})
 
-    app.installEventFilter(KeyMonitor(inv))
-    low_hook = WindowsLowLevelKeyHook(inv)
+    key_monitor = KeyMonitor(inv, cfg.key_rules)
+    app.installEventFilter(key_monitor)
+    low_hook = WindowsLowLevelKeyHook(inv, cfg.key_rules)
     low_hook.start()
 
     w = ExamWindow(cfg, inv)

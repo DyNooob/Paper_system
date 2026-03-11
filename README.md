@@ -15,7 +15,7 @@
 
 - `config.php`：下发配置
 - `invigilate.php`：接收行为/作弊/截图/进程快照
-- `command.php`：监考下发命令（`terminate` / `screenshot_once` / `process_report_once`）
+- `command.php`：监考下发命令（`terminate` / `screenshot_once` / `process_report_once` / `notice_message`）
 - `dashboard.php`：监考端主页面（自动刷新）
 - `dashboard_data.php`：监考端数据接口
 
@@ -30,7 +30,7 @@ php -S 0.0.0.0:8080 -t php_api
 监考端：
 
 ```text
-http://127.0.0.1:8080/dashboard.php?exam_id=demo-exam&passkey=123456
+http://127.0.0.1:8080/dashboard.php?exam_id=demo-exam&passkey=admin123
 ```
 
 
@@ -55,3 +55,7 @@ build_windows.bat
 - `php_api/exams.json` 支持在每个考试项中配置 `id` 字段，客户端可以使用该 `id` 登录（后端会自动解析到实际考试键名）。
 - 客户端在考试登录失败/考生登录失败时会保留登录窗口并提示错误，无需重启软件。
 - 客户端启动和网络校验阶段会显示“正在初始化”提示窗口，避免打包后无界面等待。
+
+- `php_api/exams.json` 现支持分离 `student_passkey`（学生端）与 `admin_passkey`（监考端）。
+- 支持配置 `key_rules` 自定义按键监控列表。
+- 监考端支持给单个学生发送通知，且支持设置自动警告/自动终止作弊阈值。
