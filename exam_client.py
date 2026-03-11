@@ -15,7 +15,7 @@ from typing import Any
 import requests
 
 # PyInstaller/WebEngine 黑屏缓解
-os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --disable-gpu-compositing --disable-features=VizDisplayCompositor --no-sandbox")
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --disable-gpu-compositing --disable-features=VizDisplayCompositor --disable-software-rasterizer --use-angle=swiftshader --use-gl=angle --no-sandbox")
 os.environ.setdefault("QT_OPENGL", "software")
 os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
@@ -25,7 +25,7 @@ from PySide6.QtWebEngineCore import QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 
 DEFAULT_API_BASE = "https://api.nooob.top/paper"
-USER_AGENT = "PaperSystem-ExamClient/4.3"
+USER_AGENT = "PaperSystem-ExamClient/4.4"
 
 
 @dataclass
@@ -219,7 +219,7 @@ def detect_virtual_machine() -> bool:
     return any(x in out for x in ["virtualbox", "vmware", "kvm", "qemu", "xen", "hyper-v"])
 
 
-def load_config(exam_id: str, passkey: str, ip: str, api_base: str) -> tuple[ExamConfig, str | None]:
+def load_config(exam_id: str, passkey: str, ip: str, api_base: str) -> tuple[ExamConfig, str | None, str]:
     r = requests.get(f"{api_base.rstrip('/')}/config.php", params={"id": exam_id, "passkey": passkey, "ip": ip}, headers={"User-Agent": USER_AGENT}, timeout=10)
     try:
         d = r.json()
@@ -231,8 +231,9 @@ def load_config(exam_id: str, passkey: str, ip: str, api_base: str) -> tuple[Exa
     url = str(c.get("exam_url", "")).strip()
     if not url:
         raise RuntimeError("config missing exam_url")
+    resolved_exam_id = str(d.get("resolved_exam_id", exam_id) or exam_id)
     return ExamConfig(
-        exam_id=exam_id,
+        exam_id=resolved_exam_id,
         exam_url=url,
         force_fullscreen=bool(c.get("force_fullscreen", True)),
         top_most=bool(c.get("top_most", True)),
@@ -250,7 +251,7 @@ def load_config(exam_id: str, passkey: str, ip: str, api_base: str) -> tuple[Exa
         heartbeat_interval_sec=max(5, int(c.get("heartbeat_interval_sec", 12))),
         process_scan_interval_sec=max(1, int(c.get("process_scan_interval_sec", 3))),
         focus_check_interval_sec=max(1, int(c.get("focus_check_interval_sec", 1))),
-    ), d.get("session_token")
+    ), d.get("session_token"), resolved_exam_id
 
 
 def check_environment_conflicts(cfg: ExamConfig) -> list[str]:
@@ -271,6 +272,25 @@ def check_environment_conflicts(cfg: ExamConfig) -> list[str]:
         else:
             bad.append("存在禁用进程: " + ", ".join(hits))
     return bad
+
+
+class StartupDialog(QtWidgets.QDialog):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("启动中")
+        self.setModal(True)
+        self.setWindowFlag(QtCore.Qt.WindowCloseButtonHint, False)
+        lay = QtWidgets.QVBoxLayout(self)
+        self.label = QtWidgets.QLabel("正在启动考试客户端，请稍候…", self)
+        self.bar = QtWidgets.QProgressBar(self)
+        self.bar.setRange(0, 0)
+        lay.addWidget(self.label)
+        lay.addWidget(self.bar)
+        self.resize(360, 110)
+
+    def set_text(self, text: str) -> None:
+        self.label.setText(text)
+        QtWidgets.QApplication.processEvents()
 
 
 class LoginDialog(QtWidgets.QDialog):
@@ -317,6 +337,15 @@ class KeyMonitor(QtCore.QObject):
     def __init__(self, inv: InvigilatorClient):
         super().__init__()
         self.inv = inv
+        self._last_sent: dict[str, float] = {}
+
+    def _emit(self, shortcut: str, desc: str) -> None:
+        now = QtCore.QDateTime.currentDateTimeUtc().toMSecsSinceEpoch() / 1000.0
+        key = f"{shortcut}:{desc}"
+        if now - self._last_sent.get(key, 0.0) < 0.5:
+            return
+        self._last_sent[key] = now
+        self.inv.send_event("suspicious_key", {"shortcut": shortcut, "description": desc, "is_cheat": True})
 
     def eventFilter(self, obj: QtCore.QObject, event: QtCore.QEvent) -> bool:  # noqa: N802
         if event.type() not in (QtCore.QEvent.KeyPress, QtCore.QEvent.ShortcutOverride):
@@ -340,8 +369,10 @@ class KeyMonitor(QtCore.QObject):
             desc = "尝试打开开始菜单"
         elif key in (int(QtCore.Qt.Key_Meta), int(QtCore.Qt.Key_Super_L), int(QtCore.Qt.Key_Super_R)):
             desc = "尝试Win键操作"
+        elif (mods & QtCore.Qt.AltModifier) and key == int(QtCore.Qt.Key_Tab):
+            desc = "尝试切屏"
         if desc:
-            self.inv.send_event("suspicious_key", {"shortcut": shortcut, "description": desc, "is_cheat": True})
+            self._emit(shortcut, desc)
         return False
 
 
@@ -415,6 +446,8 @@ class WindowsLowLevelKeyHook:
                     report('alttab', {"shortcut":"Alt+Tab","description":"尝试切屏","is_cheat":True})
                 elif alt and vk == VK_F4:
                     report('altf4', {"shortcut":"Alt+F4","description":"尝试关闭考试窗口","is_cheat":True})
+                elif alt and vk == VK_ESCAPE:
+                    report('altesc', {"shortcut":"Alt+Esc","description":"尝试切换窗口","is_cheat":True})
                 elif ctrl and shift and vk == VK_ESCAPE:
                     report('ctrlshiftesc', {"shortcut":"Ctrl+Shift+Esc","description":"尝试打开任务管理器","is_cheat":True})
                 elif ctrl and vk == VK_ESCAPE:
@@ -430,9 +463,16 @@ class WindowsLowLevelKeyHook:
             return
 
         msg = MSG()
-        while not self._stop.is_set() and user32.GetMessageW(ctypes.byref(msg), None, 0, 0) != 0:
+        while not self._stop.is_set() and user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
             user32.TranslateMessage(ctypes.byref(msg))
             user32.DispatchMessageW(ctypes.byref(msg))
+
+        while not self._stop.is_set():
+            if user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 1):
+                user32.TranslateMessage(ctypes.byref(msg))
+                user32.DispatchMessageW(ctypes.byref(msg))
+            else:
+                kernel32.Sleep(30)
 
         user32.UnhookWindowsHookEx(hook)
 
@@ -493,10 +533,11 @@ class ExamWindow(QtWidgets.QMainWindow):
         if self.ended:
             return
         self.ended = True
-        self.inv.send_event(event_type, {"reason": reason})
+        self.inv.send_event_sync(event_type, {"reason": reason})
+        self.inv.send_event("session_state", {"login": False, "locked_out": True, "reason": reason})
         self.proc_stop.set()
         self.setEnabled(False)
-        QtWidgets.QMessageBox.critical(self, "考试结束", "考试结束")
+        QtWidgets.QMessageBox.information(self, "考试结束", "考试已结束，客户端将退出。")
         QtWidgets.QApplication.instance().quit()
 
     def on_escape_exit(self) -> None:
@@ -573,54 +614,82 @@ def main() -> int:
     QtCore.QCoreApplication.setAttribute(QtCore.Qt.AA_UseSoftwareOpenGL)
     app = QtWidgets.QApplication(sys.argv)
 
-    login = LoginDialog()
-    if login.exec() != QtWidgets.QDialog.Accepted:
-        return 0
-
-    exam_id = login.exam_id.text().strip()
-    passkey = login.passkey.text().strip()
-    api_base = login.api_base.text().strip() or DEFAULT_API_BASE
-    if not exam_id or not passkey:
-        QtWidgets.QMessageBox.critical(None, "错误", "考试ID和密码不能为空")
-        return 1
+    startup = StartupDialog()
+    startup.show()
+    startup.set_text("正在加载登录窗口…")
 
     ip = get_local_ip()
-    inv = InvigilatorClient(exam_id, passkey, ip, api_base)
+    inv: InvigilatorClient | None = None
+    cfg: ExamConfig | None = None
 
-    try:
-        cfg, token = load_config(exam_id, passkey, ip, api_base)
-    except Exception as exc:
-        QtWidgets.QMessageBox.critical(None, "配置错误", str(exc))
-        inv.close()
-        return 2
+    while True:
+        login = LoginDialog()
+        startup.hide()
+        if login.exec() != QtWidgets.QDialog.Accepted:
+            if inv:
+                inv.close()
+            return 0
 
-    inv.set_token(token)
+        exam_id = login.exam_id.text().strip()
+        passkey = login.passkey.text().strip()
+        api_base = login.api_base.text().strip() or DEFAULT_API_BASE
+        if not exam_id or not passkey:
+            QtWidgets.QMessageBox.critical(login, "错误", "考试ID和密码不能为空")
+            continue
 
-    conflicts = check_environment_conflicts(cfg)
-    inv.send_event("environment_checked", {"conflicts": conflicts})
-    if conflicts:
-        inv.send_event("entry_denied_environment", {"conflicts": conflicts})
-        QtWidgets.QMessageBox.critical(None, "环境冲突", "\n".join(conflicts))
-        inv.close()
-        return 3
+        startup.show()
+        startup.set_text("正在验证考试配置，请稍候…")
+
+        if inv:
+            inv.close()
+        inv = InvigilatorClient(exam_id, passkey, ip, api_base)
+
+        try:
+            cfg, token, resolved_exam_id = load_config(exam_id, passkey, ip, api_base)
+        except Exception as exc:
+            startup.hide()
+            QtWidgets.QMessageBox.critical(login, "配置错误", str(exc))
+            inv.close()
+            inv = None
+            continue
+
+        inv.exam_id = resolved_exam_id
+        inv.set_token(token)
+
+        conflicts = check_environment_conflicts(cfg)
+        inv.send_event("environment_checked", {"conflicts": conflicts})
+        if conflicts:
+            startup.hide()
+            inv.send_event("entry_denied_environment", {"conflicts": conflicts})
+            QtWidgets.QMessageBox.critical(login, "环境冲突", "\n".join(conflicts))
+            inv.close()
+            inv = None
+            continue
+        break
+
+    assert inv is not None and cfg is not None
 
     if cfg.require_student_login:
-        sdlg = StudentLoginDialog(cfg.class_options)
-        if sdlg.exec() != QtWidgets.QDialog.Accepted:
-            inv.close()
-            return 0
-        stu = sdlg.profile()
-        if not stu.student_id or not stu.name or not stu.class_name:
-            QtWidgets.QMessageBox.critical(None, "错误", "学号/姓名/班级必须填写")
-            inv.close()
-            return 4
-        ok, err = inv.student_login(stu)
-        if not ok:
-            QtWidgets.QMessageBox.critical(None, "登录失败", err or "未知错误")
-            inv.close()
-            return 5
+        while True:
+            sdlg = StudentLoginDialog(cfg.class_options)
+            startup.hide()
+            if sdlg.exec() != QtWidgets.QDialog.Accepted:
+                inv.close()
+                return 0
+            stu = sdlg.profile()
+            if not stu.student_id or not stu.name or not stu.class_name:
+                QtWidgets.QMessageBox.critical(sdlg, "错误", "学号/姓名/班级必须填写")
+                continue
+            startup.show()
+            startup.set_text("正在验证考生身份，请稍候…")
+            ok, err = inv.student_login(stu)
+            if ok:
+                break
+            startup.hide()
+            QtWidgets.QMessageBox.critical(sdlg, "登录失败", err or "未知错误")
 
-    # 首次登录只上报一次完整进程快照
+    startup.hide()
+
     inv.send_event("process_report", {"reason": "first_login", "processes": list_processes_windows(250)})
 
     app.installEventFilter(KeyMonitor(inv))
@@ -630,7 +699,7 @@ def main() -> int:
     w = ExamWindow(cfg, inv)
     rc = app.exec()
     low_hook.stop()
-    inv.send_event("client_exit", {"code": rc})
+    inv.send_event_sync("client_exit", {"code": rc})
     inv.close()
     return rc
 

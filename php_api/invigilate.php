@@ -7,21 +7,24 @@ if ($payload === []) {
     send_json(['ok' => false, 'error' => 'invalid json'], 200);
 }
 
-$examId = trim((string)($payload['exam_id'] ?? ''));
+$examIdRaw = trim((string)($payload['exam_id'] ?? ''));
+$examId = $examIdRaw;
 $passkey = trim((string)($payload['passkey'] ?? ''));
 $token = trim((string)($payload['token'] ?? ''));
 $eventType = trim((string)($payload['event_type'] ?? ''));
 $ip = trim((string)($payload['ip'] ?? ($_SERVER['REMOTE_ADDR'] ?? '')));
 
-if ($examId === '' || $eventType === '') {
+if ($examIdRaw === '' || $eventType === '') {
     send_json(['ok' => false, 'error' => 'missing exam_id/event_type'], 200);
 }
 
 $exams = load_exams(__DIR__);
-if (!isset($exams[$examId])) {
-    send_json(['ok' => false, 'error' => 'auth failed: exam_id not exists'], 200);
+$resolved = resolve_exam($exams, $examIdRaw);
+if (!$resolved['ok']) {
+    send_json(['ok' => false, 'error' => 'auth failed: exam_id not exists', 'exam_id' => $examIdRaw], 200);
 }
-$exam = $exams[$examId];
+$examId = (string)$resolved['key'];
+$exam = is_array($resolved['exam']) ? $resolved['exam'] : [];
 $examPass = (string)($exam['passkey'] ?? '');
 
 $auth = ($passkey !== '' && $passkey === $examPass) || ($token !== '' && verify_token($token, $examId, $examPass, $ip, get_secret(__DIR__)));
@@ -145,6 +148,16 @@ try {
         }
         if ($eventType === 'exam_exit' || $eventType === 'terminated_by_admin') {
             $row['locked_out'] = true;
+            $row['login'] = false;
+        }
+
+        if ($eventType === 'session_state') {
+            if (array_key_exists('login', $detail)) {
+                $row['login'] = (bool)$detail['login'];
+            }
+            if (array_key_exists('locked_out', $detail)) {
+                $row['locked_out'] = (bool)$detail['locked_out'];
+            }
         }
 
         if (is_cheat_event($eventType)) {

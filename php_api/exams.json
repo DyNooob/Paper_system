@@ -34,6 +34,6 @@
     "process_scan_interval_sec": 3,
     "focus_check_interval_sec": 1,
     "session_ttl_sec": 21600,
-    "id": "demo-exam"
+    "id": "1"
   }
 }

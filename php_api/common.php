@@ -49,6 +49,24 @@ function load_exams(string $base): array
     return $data;
 }
 
+
+
+function resolve_exam(array $exams, string $inputId): array
+{
+    if (isset($exams[$inputId]) && is_array($exams[$inputId])) {
+        return ['ok' => true, 'key' => $inputId, 'exam' => $exams[$inputId]];
+    }
+    foreach ($exams as $k => $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+        if ((string)($row['id'] ?? '') === $inputId) {
+            return ['ok' => true, 'key' => (string)$k, 'exam' => $row];
+        }
+    }
+    return ['ok' => false, 'key' => $inputId, 'exam' => null];
+}
+
 function load_students_map(string $base): array
 {
     return load_json_file($base . '/students.json', []);

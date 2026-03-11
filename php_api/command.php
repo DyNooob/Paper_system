@@ -3,21 +3,25 @@ declare(strict_types=1);
 require_once __DIR__ . '/common.php';
 
 $mode = trim((string)($_GET['mode'] ?? $_POST['mode'] ?? 'pull'));
-$examId = trim((string)($_GET['exam_id'] ?? $_POST['exam_id'] ?? ''));
+$examIdRaw = trim((string)($_GET['exam_id'] ?? $_POST['exam_id'] ?? ''));
+$examId = $examIdRaw;
 $passkey = trim((string)($_GET['passkey'] ?? $_POST['passkey'] ?? ''));
 $token = trim((string)($_GET['token'] ?? $_POST['token'] ?? ''));
 $studentId = trim((string)($_GET['student_id'] ?? $_POST['student_id'] ?? ''));
 $ip = trim((string)($_GET['ip'] ?? $_POST['ip'] ?? ($_SERVER['REMOTE_ADDR'] ?? '')));
 
-if ($examId === '' || $studentId === '') {
+if ($examIdRaw === '' || $studentId === '') {
     send_json(['ok' => false, 'error' => 'missing exam_id/student_id'], 200);
 }
 
 $exams = load_exams(__DIR__);
-if (!isset($exams[$examId])) {
-    send_json(['ok' => false, 'error' => 'exam not found'], 200);
+$resolved = resolve_exam($exams, $examIdRaw);
+if (!$resolved['ok']) {
+    send_json(['ok' => false, 'error' => 'exam not found', 'exam_id' => $examIdRaw], 200);
 }
-$examPass = (string)($exams[$examId]['passkey'] ?? '');
+$examId = (string)$resolved['key'];
+$exam = is_array($resolved['exam']) ? $resolved['exam'] : [];
+$examPass = (string)($exam['passkey'] ?? '');
 $auth = ($passkey !== '' && $passkey === $examPass) || ($token !== '' && verify_token($token, $examId, $examPass, $ip, get_secret(__DIR__)));
 if (!$auth) {
     send_json(['ok' => false, 'error' => 'auth failed'], 200);

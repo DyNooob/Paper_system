@@ -2,9 +2,16 @@
 declare(strict_types=1);
 require_once __DIR__ . '/common.php';
 
-$examId = trim((string)($_GET['exam_id'] ?? 'demo-exam'));
+$examIdRaw = trim((string)($_GET['exam_id'] ?? 'demo-exam'));
+$examId = $examIdRaw;
 $studentId = trim((string)($_GET['student_id'] ?? ''));
 $cheatOnly = ((string)($_GET['cheat_only'] ?? '0')) === '1';
+
+$exams = load_exams(__DIR__);
+$resolved = resolve_exam($exams, $examIdRaw);
+if ($resolved['ok']) {
+    $examId = (string)$resolved['key'];
+}
 
 $state = load_state(__DIR__, $examId);
 $stateStudents = is_array($state['students'] ?? null) ? $state['students'] : [];

@@ -14,25 +14,11 @@ if ($id === '' || $passkey === '') {
 }
 
 $exams = load_exams(__DIR__);
-$exam = null;
-$resolvedId = $id;
+$resolved = resolve_exam($exams, $id);
+$exam = is_array($resolved['exam']) ? $resolved['exam'] : null;
+$resolvedId = (string)$resolved['key'];
 
-if (isset($exams[$id]) && is_array($exams[$id])) {
-    $exam = $exams[$id];
-} else {
-    foreach ($exams as $k => $row) {
-        if (!is_array($row)) {
-            continue;
-        }
-        if ((string)($row['id'] ?? '') === $id) {
-            $exam = $row;
-            $resolvedId = (string)$k;
-            break;
-        }
-    }
-}
-
-if ($exam === null) {
+if (!$resolved['ok'] || $exam === null) {
     send_json([
         'ok' => false,
         'error' => 'exam not found',
@@ -53,6 +39,7 @@ $token = create_token($resolvedId, $passkey, $ip, $exp, get_secret(__DIR__));
 
 send_json([
     'ok' => true,
+    'resolved_exam_id' => $resolvedId,
     'config' => [
         'exam_url' => (string)($exam['exam_url'] ?? ''),
         'force_fullscreen' => (bool)($exam['force_fullscreen'] ?? true),
