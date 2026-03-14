@@ -522,6 +522,7 @@ class ExamWindow(QtWidgets.QMainWindow):
         self.proc_thread.start()
         self.notice_dialog_open = False
         self.suspend_focus_guard_until = 0.0
+        self.modal_dialog_depth = 0
 
         if cfg.force_fullscreen:
             self.showFullScreen()
@@ -582,7 +583,7 @@ class ExamWindow(QtWidgets.QMainWindow):
     def focus_guard(self) -> None:
         if not self.cfg.focus_guard or self.ended:
             return
-        if time.time() < self.suspend_focus_guard_until:
+        if self.modal_dialog_depth > 0 or time.time() < self.suspend_focus_guard_until:
             return
         active = self.isActiveWindow()
         full = self.windowState() == QtCore.Qt.WindowFullScreen
@@ -595,16 +596,24 @@ class ExamWindow(QtWidgets.QMainWindow):
 
     def show_safe_message(self, level: str, title: str, text: str) -> None:
         self.suspend_focus_guard_until = max(self.suspend_focus_guard_until, time.time() + 2.0)
-        if level == "warning":
-            QtWidgets.QMessageBox.warning(self, title, text)
-        else:
-            QtWidgets.QMessageBox.information(self, title, text)
-        self.suspend_focus_guard_until = max(self.suspend_focus_guard_until, time.time() + 1.0)
+        self.modal_dialog_depth += 1
+        try:
+            if level == "warning":
+                QtWidgets.QMessageBox.warning(self, title, text)
+            else:
+                QtWidgets.QMessageBox.information(self, title, text)
+        finally:
+            self.modal_dialog_depth = max(0, self.modal_dialog_depth - 1)
+            self.suspend_focus_guard_until = max(self.suspend_focus_guard_until, time.time() + 1.0)
 
     def ask_safe_question(self, title: str, text: str) -> int:
         self.suspend_focus_guard_until = max(self.suspend_focus_guard_until, time.time() + 3.0)
-        ans = QtWidgets.QMessageBox.question(self, title, text)
-        self.suspend_focus_guard_until = max(self.suspend_focus_guard_until, time.time() + 1.0)
+        self.modal_dialog_depth += 1
+        try:
+            ans = QtWidgets.QMessageBox.question(self, title, text)
+        finally:
+            self.modal_dialog_depth = max(0, self.modal_dialog_depth - 1)
+            self.suspend_focus_guard_until = max(self.suspend_focus_guard_until, time.time() + 1.0)
         return ans
 
     def capture_full_system_once(self) -> None:
